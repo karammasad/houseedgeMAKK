@@ -1,5 +1,31 @@
 # Method 2 findings: payout sizes given a win
 
+## Experiment 7: learned direction / constant-state priors (REVERTED; final stays joint EM 57.787)
+
+**Question asked:** learn the tied-cell partition prior by empirical Bayes. **It already was:** joint EM fits rho
+(big / 1x / loss split) by regularized EB, averaging over size lag and tied/free shape (sizes.py joint EM
+M-step, `part_floor`). It is .961/.02/.02. So the next most promising parameter was tested instead.
+
+**Hypothesis:** the tied model's direction (does a big win at the gate lag mean the high-1x state?) and the
+no-gate constant state were fixed at 1/2. Learning them per type should sharpen short histories, which can't
+pin the direction from about 15 wins.
+**Estimator:** joint-EM M-step, MAP with Beta(10, 10) (lambda = 20 fixed a priori, not tuned), clipped [.05, .95].
+Option `gate_learn_direction` (default False; at 1/2 it reproduces the final model bit for bit, SHA 450755db).
+
+**Learned on full train:** direction steady .487, balanced .479, jackpot .545 (MLE .496/.470/.569);
+constant state .545/.448/.533 (MLE .95/.15/.95: no-gate machines are rare, so this is poorly identified).
+The direction skew seen earlier (31:13 on confident stable machines) does not hold population-wide.
+
+| model | tuning | audit | full | stable | short | drift | shared |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| final (joint EM) | 57.901 | 57.665 | 57.787 | .0321 | .0644 | .0296 | .0271 |
+| + learned direction | 57.906 | 57.666 | 57.790 | .0321 | .0641 | .0296 | .0272 |
+
+Bootstrap P(better) = 0.83 (< .95), 3/4 conditions → **REVERT** (kept as an option). Conclusion: direction is
+genuinely about 50/50 per type, so there is no population-level information to borrow; short histories must
+learn it from their own data. Next candidate: re-estimate the two state levels (lo/hi) inside joint EM
+(they still come from NPMLE atoms fitted on best-hypothesis cells).
+
 ## ★★★★ Update 4: joint EM (current final)
 Training now fits the tie weight, split prior, lag prior and coupling table jointly by EM over every
 (size lag, cell shape) instead of at each machine's best free lag (selection bias). Main effect: split prior

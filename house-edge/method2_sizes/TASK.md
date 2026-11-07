@@ -40,3 +40,6 @@ To measure size changes alone, keep the gate fixed (same Model settings) and cha
 - UPDATE 4: joint empirical-Bayes EM promoted (`gate_joint_em=True` in FINAL). Keep check vs previous final:
   tuning 57.901 (+0.155), audit 57.665 (+0.175), full 57.787 (+0.165), 4/4 conditions, bootstrap P=1.00.
   Upload files rebuilt in out/main_entry/ (SHA 450755db).
+- EXPERIMENT 7 (reverted): learned direction / constant-state priors (`gate_learn_direction`). Full 57.790 vs
+  57.787, bootstrap P=.83 → not adopted. Final stays joint EM (SHA 450755db). Unit tests:
+  `python -m unittest method2_sizes.test_method2`.

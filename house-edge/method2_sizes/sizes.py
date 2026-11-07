@@ -89,8 +89,12 @@ class GateSizes:
     def __init__(self, max_lag=8, strength=4.0, p_none=0.3, learn_prior=True, prior_floor=0.02, half_life=None,
                  cell_prior="beta", grid=49, npmle_iters=200, split_conc_cap=1e6,
                  couple=False, couple_alpha=5.0, couple_mix=0.1, couple_iters=1, win_cfg=None, tied=False, tie_weight=0.7, part_floor=0.02,
-                 joint_em=False, joint_iters=30):
+                 joint_em=False, joint_iters=30, learn_direction=False, direction_strength=20.0):
         self.joint_em, self.joint_iters, self.joint_trace = joint_em, joint_iters, []
+        # learned direction / constant-state priors per type (joint EM M-step, Beta(lam/2, lam/2) MAP).
+        # Default off: every probability below is exactly 1/2, i.e. the previous model bit for bit.
+        self.learn_direction, self.direction_strength = learn_direction, direction_strength
+        self.dir_prior, self.const_prior = {}, {}
         self.tied, self.tie_weight, self.part_floor = tied, tie_weight, part_floor
         self.tie_weight_setting = tie_weight   # "learn" -> fitted on train in fit()
         self.levels = None; self.part_prior = None
@@ -148,13 +152,14 @@ class GateSizes:
         out = []
         if k_is_none:   # constant state, lo or hi
             c0, c1 = cells[0]
+            ks = self.const_prior.get(t, .5)
             for s in (0, 1):
-                out.append((math.log(.5) + ll_cell(c0, c1, lvl[s]), lvl[s]))
+                out.append((math.log(ks if s else 1 - ks) + ll_cell(c0, c1, lvl[s]), lvl[s]))
         else:
             for pi, grp in enumerate(self.PARTITIONS):
-                lp = math.log(self.part_prior[pi]) + math.log(.5)
-                for d in (0, 1):   # d = state of group B
-                    ll = lp
+                dl = self.dir_prior.get(t, .5)
+                for d in (0, 1):   # d = state of group B (1 = high-1x level); prior P(d=1) = dir_prior
+                    ll = math.log(self.part_prior[pi]) + math.log(dl if d else 1 - dl)
                     for ci in range(3):
                         c0, c1 = cells[ci]
                         ll += ll_cell(c0, c1, lvl[d if ci in grp else 1 - d])
@@ -378,12 +383,11 @@ class GateSizes:
         ll = lambda c0, c1, a: c1 * math.log(a) + c0 * math.log(1 - a)
         if k_is_none:
             c0, c1 = cells[0]
-            return _logsumexp([math.log(.5) + ll(c0, c1, a) for a in lvl])
+            return [ll(c0, c1, a) for a in lvl]                     # [state lo, state hi]
         mix = ll(*cells[3], (lo + hi) / 2)
         out = []
-        for grp in self.PARTITIONS:
-            out.append(_logsumexp([math.log(.5) + sum(ll(*cells[ci], lvl[d if ci in grp else 1 - d]) for ci in range(3))
-                                   for d in (0, 1)]) + mix)
+        for grp in self.PARTITIONS:                  # per partition: ([d = 0, d = 1] cell terms, missing-lag mixture)
+            out.append(([sum(ll(*cells[ci], lvl[d if ci in grp else 1 - d]) for ci in range(3)) for d in (0, 1)], mix))
         return out
 
     def _fit_joint_em(self, queries, seq):
@@ -400,21 +404,29 @@ class GateSizes:
             F = [sum(self._cell(c0, c1, t, self.mu[t])[0] for c0, c1 in cells) for cells, _ in hyp]
             T = [self._tied_raw(cells, t, k == 0) for k, (cells, _) in enumerate(hyp)]
             wp = [(i, x) for i, x in enumerate(self._win_posterior(s)) if x > 1e-4] if self.couple else []
-            data.append((F, T, wp))
+            data.append((F, T, wp, t))
         w, rho, g = self.tie_weight if isinstance(self.tie_weight, float) else .5, self.part_prior[:], self.prior[:]
         cond = [row[:] for row in self.cond] if self.couple else None
         self.joint_trace = []
         for it in range(self.joint_iters):
             Wt = 0.0; Rp = [0.0] * len(rho); G = [0.0] * K; Cc = [[0.0] * K for _ in range(S)]; ll_tot = 0.0; H = 0.0
-            for F, T, wp in data:
+            Dd = defaultdict(lambda: [0.0, 0.0]); Ds = defaultdict(lambda: [0.0, 0.0])
+            for F, T, wp, typ in data:
+                dl = self.dir_prior.get(typ, .5); ks = self.const_prior.get(typ, .5)
+                ldir = [math.log(1 - dl), math.log(dl)]; lcon = [math.log(1 - ks), math.log(ks)]
                 # shape-marginal log-likelihood per lag, and within-lag shape responsibilities
-                Lk, shp = [], []
+                Lk, shp, dpost = [], [], []
                 for k in range(K):
                     lf = math.log(1 - w) + F[k]
                     if k == 0:
-                        lt = [math.log(w) + T[0]]
+                        terms0 = [lcon[s] + T[0][s] for s in (0, 1)]; z0 = _logsumexp(terms0)
+                        lt = [math.log(w) + z0]; dpost.append([math.exp(terms0[1] - z0)])
                     else:
-                        lt = [math.log(w) + math.log(rp) + tp for rp, tp in zip(rho, T[k])]
+                        tps = []; dps = []
+                        for tp, mix in T[k]:   # same arithmetic order as the original (bit-identical at dir 1/2)
+                            td = [ldir[d] + tp[d] for d in (0, 1)]; zd = _logsumexp(td)
+                            tps.append(zd + mix); dps.append(math.exp(td[1] - zd))
+                        lt = [math.log(w) + math.log(rp) + tp for rp, tp in zip(rho, tps)]; dpost.append(dps)
                     z = _logsumexp([lf] + lt); Lk.append(z)
                     shp.append([math.exp(lf - z)] + [math.exp(x - z) for x in lt])
                 # source x lag responsibilities
@@ -432,6 +444,11 @@ class GateSizes:
                         Cc[i][k] += p
                 for k in range(K):
                     tied = sum(shp[k][1:]); Wt += rk[k] * tied
+                    if k == 0:
+                        r = rk[k] * shp[k][1]; Ds[typ][0] += r; Ds[typ][1] += r * dpost[0][0]
+                    else:
+                        for j in range(len(rho)):
+                            r = rk[k] * shp[k][1 + j]; Dd[typ][0] += r; Dd[typ][1] += r * dpost[k][j]
                     if k > 0:
                         for j in range(len(rho)):
                             Rp[j] += rk[k] * shp[k][1 + j]
@@ -446,7 +463,14 @@ class GateSizes:
                 g = [max(self.prior_floor, x / zg) for x in G]; zg = sum(g); g = [x / zg for x in g]
             if self.couple:
                 cond = [[(Cc[i][k] + a * g[k]) / (sum(Cc[i]) + a) for k in range(K)] for i in range(S)]
-            self.joint_trace.append(dict(iter=it + 1, loglik=ll_tot, tie_weight=w, rho=rho[:], train_entropy=H / M))
+            if self.learn_direction:   # MAP with Beta(lam/2, lam/2): shrinks toward 1/2, clipped away from 0/1
+                lam = self.direction_strength
+                for typ, (n, n1) in Dd.items():
+                    self.dir_prior[typ] = min(.95, max(.05, (n1 + lam / 2) / (n + lam)))
+                for typ, (n, n1) in Ds.items():
+                    self.const_prior[typ] = min(.95, max(.05, (n1 + lam / 2) / (n + lam)))
+            self.joint_trace.append(dict(iter=it + 1, loglik=ll_tot, tie_weight=w, rho=rho[:], train_entropy=H / M,
+                                         dir_prior=dict(self.dir_prior), const_prior=dict(self.const_prior)))
         self.tie_weight, self.part_prior, self.prior = w, rho, g
         if self.couple:
             self.cond = cond
