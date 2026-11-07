@@ -55,3 +55,9 @@ To measure size changes alone, keep the gate fixed (same Model settings) and cha
 - EXPERIMENTS 9-10 (reverted): joint win x size inference (`joint_feedback`, joint.py) and adaptive feedback gates
   (adaptive.py). KC1 (= Adi's cell_signal) KEEP 58.074; KC2 short-log feedback REVERT (audit -0.015, P=.65).
   Final unchanged: 58.074, CSV SHA 56c5cd55 (re-verified with the current code).
+- EXPERIMENT 11 (diagnostic, nothing promoted): generative simulator + PPC + ceiling (genmodel.py, ppc.py,
+  ceiling.py, flip_*_probe.py); learned flip-time prior (flipprior.py, `flip_prior`, default off) -0.215 tuning.
+  Final unchanged (58.074, CSV 56c5cd55). See FINDINGS.md.
+- EXPERIMENTS 12-13 (reverted): exact marginalization over unobserved ticks. Win-only filter (`miss_filter=True`):
+  full 58.117, audit -0.009, P=.917. Joint win x size filter (`miss_filter="joint"`): tuning +0.115, audit -0.036,
+  full 58.118, P=.672. Final unchanged: 58.074, CSV SHA 56c5cd55 (re-verified, 14 unit tests pass).

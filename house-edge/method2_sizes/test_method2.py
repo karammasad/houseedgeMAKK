@@ -106,5 +106,87 @@ class TestJointMath(unittest.TestCase):
         self.assertAlmostEqual(sum(p), 1.0, places=12); self.assertTrue(all(x >= 0 for x in p))
 
 
+class TestMissFilter(unittest.TestCase):
+    """Experiment 12: exact marginalization over unobserved gate inputs (no data files needed)."""
+    def setUp(self):
+        import random
+        from method2_sizes.missfilter import MissFilter
+        self.mf = MissFilter({"balanced": [.8, .07, 50, 50, .3, .3]}, G=6)
+        rng = random.Random(1); self.s = [rng.choice((0, 1, 1, 2)) for _ in range(30)]
+        for t in (6, 7, 13, 14, 15, 22):
+            self.s[t] = -1
+        self.r = {"machine_type": "balanced", "signal": 0}
+
+    def test_matches_brute_force_enumeration_of_hidden_bits(self):
+        mf, w = self.mf, [-1 if v < 0 else int(v > 0) for v in self.s]
+        obs = [x for x in w if x >= 0]; p = min(.95, max(.05, sum(obs) / len(obs))); pair, o = (2, 5), 1
+        pr_on, pr_off = mf._grid_prior("balanced", 0); z_fast, _ = mf._evidence(w, pair, o, pr_on, pr_off, True, p)
+        a, b = pair; tot = []
+        for i in range(mf.G):
+            for j in range(mf.G):
+                ll = pr_on[i] + pr_off[j]
+                for t in range(b, len(w)):
+                    if w[t] < 0:
+                        continue
+                    va, vb = w[t - a], w[t - b]; rate = 0.0
+                    for ha in ((va,) if va >= 0 else (0, 1)):
+                        for hb in ((vb,) if vb >= 0 else (0, 1)):
+                            pa = 1.0 if va >= 0 else (p if ha else 1 - p); pb = 1.0 if vb >= 0 else (p if hb else 1 - p)
+                            rate += pa * pb * (mf.g[i] if (ha ^ hb) == o else mf.g[j])
+                    ll += math.log(rate if w[t] else 1 - rate)
+                tot.append(ll)
+        m = max(tot); self.assertAlmostEqual(z_fast, m + math.log(sum(math.exp(x - m) for x in tot)), places=9)
+
+    def test_no_unknown_ticks_means_identical(self):
+        full = [max(0, v) for v in self.s]   # fully observed: nothing to marginalize
+        mf = self.mf; mf.none_mean = {"balanced": .4}; K = 57; mf.prior = [1 / K] * K
+        self.assertAlmostEqual(mf.pwin(self.r, full, True), mf.pwin(self.r, full, False), places=12)
+
+    def test_valid_probability_and_missing_never_loss(self):
+        mf = self.mf; mf.none_mean = {"balanced": .4}; mf.prior = [1 / 57] * 57
+        p = mf.pwin(self.r, self.s, True); self.assertTrue(0 < p < 1)
+        allmiss = [v if t >= 22 else -1 for t, v in enumerate(self.s)]   # sparse history: a gap is never filled with zeros
+        self.assertTrue(0 < mf.pwin(self.r, allmiss, True) < 1)
+
+
+class TestJointFilter(unittest.TestCase):
+    """Experiment 13: joint hidden-category marginalization equals independent brute-force enumeration."""
+    def test_matches_brute_force(self):
+        import itertools, random
+        from method2_sizes.missfilter import MissFilter
+        from method2_sizes.jointfilter import JointFilter, cat
+        par = dict(wST=[(2, 5)], cond=[[0, 0, 1.0] + [0] * 6, [0] * 9], part_prior=[.96, .02, .02],
+                   levels={"balanced": [.2, .5]}, split={"balanced": [.7, .26, .04]})
+        mf = MissFilter({"balanced": [.8, .07, 50, 50, .3, .3]}, G=4); mf.none_mean = {"balanced": .4}
+        mf.prior = [1.0 if n == ((2, 5), 1) else 0.0 for n in [(p, o) for p in __import__("method2_sizes.missfilter", fromlist=["PAIRS"]).PAIRS for o in (0, 1)]] + [0.0]
+        jf = JointFilter(mf, par, G=4, prune=0.5)
+        rng = random.Random(4); s = [rng.choice((0, 0, 1, 1, 2, 5)) for _ in range(34)]
+        for t in (8, 9, 15, 16, 17, 24):
+            s[t] = -1
+        r = {"machine_type": "balanced", "signal": 0}; pair, k, o, d = (2, 5), jf.klag((2, 5)), 1, 0
+        ll, (U, p, s1) = jf.evidence(r, s, pair, k, o, d, True)
+        lv = par["levels"]["balanced"]; qc = (1 - p, p * s1, p * (1 - s1)); a, b = pair
+        pr_on, pr_off = mf._grid_prior("balanced", 0)
+        for i in range(4):
+            for j in range(4):
+                tot = pr_on[i] + pr_off[j]
+                for t in range(max(a, b, k), len(s)):
+                    if s[t] < 0:
+                        continue
+                    lags = sorted({a, b, k}); hid = [l for l in lags if s[t - l] < 0]; f = 0.0
+                    for vals in itertools.product((0, 1, 2), repeat=len(hid)):
+                        c = {l: cat(s[t - l]) for l in lags if s[t - l] >= 0}; pr = 1.0
+                        for l, v in zip(hid, vals):
+                            c[l] = v; pr *= qc[v]
+                        rate = jf.g[i] if (int(c[a] > 0) ^ int(c[b] > 0)) == o else jf.g[j]; lk = rate if s[t] > 0 else 1 - rate
+                        if s[t] > 0:
+                            st = d if c[k] in jf.grp else 1 - d; lk *= lv[st] if s[t] == 1 else 1 - lv[st]
+                        f += pr * lk
+                    tot += math.log(f)
+                self.assertAlmostEqual(tot, ll[i * 4 + j], places=9)
+        v = jf.run(r, s, True)
+        self.assertAlmostEqual(sum(v), 1.0, places=9); self.assertTrue(all(x >= 0 for x in v))
+
+
 if __name__ == "__main__":
     unittest.main()

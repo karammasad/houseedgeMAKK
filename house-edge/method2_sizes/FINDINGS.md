@@ -1,5 +1,68 @@
 # Method 2 findings: payout sizes given a win
 
+## Experiments 12-13: exact marginalization over unobserved ticks (REVERTED on audit; final stays 58.074)
+
+**What the existing code discards** (read from adi/gate.py): any tick whose gate lags are not all observed is skipped
+for the cell counts, so in short logs the outcomes of the 24 sampled older ticks are thrown away; the size model puts
+wins with a missing size lag into a 50/50 "state unknown" cell. The cutoff cell itself is always observed in short logs.
+**Headroom bound** (`missing_diag.py`, validated simulator with known truth, real short masks): current .01347,
+lag bits revealed .00659, fully observed .00419 (total mse). The bound (+0.55 points) is LOOSE: it reveals the 8 lags
+before every sampled tick, i.e. far more data than marginalization can recover. Share of short queries whose P(win)
+would move by > .02 under that bound: 32%.
+
+**Exp 12, win-only filter** (`missfilter.py`, own implementation; hidden lag bits integrated out per tick, observed lag
+used when one exists, rates integrated on a grid against the type's Beta priors, structure prior learned by EM on
+train pre-flip history; exact vs brute-force enumeration, difference 0). Short-log P(win) squared error: FINAL
+.00535, filter with unknown ticks off .00568, ON .00522, FINAL + (ON - off) .00491. Keep check (option
+`miss_filter=True`, increment weight 1, nothing tuned): tuning 58.245 (+.089), audit 57.977 (-.009), full 58.117
+(+.043), short .0617 -> .0587, bootstrap P = .917, 1/4 conditions -> REVERT.
+
+**Exp 13, joint win x size filter** (`jointfilter.py`): a hidden lag tick is ONE payout category feeding both the win
+gate (c > 0) and the size state (c in the learned group), so it is marginalized once for both outcomes; a sampled
+win's size (1x vs big) then informs the hidden win bit. Exact vs independent brute force (5.7e-14, unit test). Short
+logs, tuning half, five-category error / win part / size part / score: FINAL .01032/.00648/.00385/58.156; win-only
+increment .00900/.00521/.00379/58.255; joint WIN increment (FINAL sizes kept) .00846/.00468/.00378/58.296; joint SIZE
+increment .01075/.00651/.00424/58.125 (size-side marginalization hurts; dropped). Keep check (`miss_filter="joint"`,
+win increment only): tuning 58.271 (+.115), audit 57.950 (-.036), full 58.118 (+.044), short .0617 -> .0586, bootstrap
+P = .672, 1/4 conditions -> REVERT.
+**Verdict.** The discarded ticks do carry information (win part -28% on the tuning-half short queries, exact math,
+independent code), but the gain does not hold on the audit half: with 24 short episodes per half the tuning gain is
+mostly sampling noise; full validation +.044 is within it. Not promoted. Both stay as off-by-default options.
+Recoverable headroom, honestly: ~+0.04 full-validation points (tuning-half estimate +0.12-0.14 is optimistic).
+
+## Experiment 11: hierarchical generative model, posterior predictive check, ceiling (no model promoted)
+
+**Simulator** (`genmodel.py`): type, signal -> win structure, polarity, flip, machine-level on/off rates (adi's
+signal-shifted Beta priors) -> win bits generated tick by tick; size lag from method 2's coupling table, tied
+two-state size state, learned levels and big-win split; optional size-state -> win-rate logit shift; observation
+mask copied from the real template (short logs keep their 40 + 24 layout).
+**PPC** (`ppc.py`, 20 statistics x type x short/long, real = validation + test histories, episode-disjoint from the
+fit): first version 55/80 statistics flagged (|Z| up to 24). Causes, all in the simulator not the models:
+(a) short logs flipped at 40% instead of ~5%; (b) adi stores split structures as (i, j, split_lag) and XORing all
+three cancels the repeated lag (pair gate became single lag: a simulator bug); (c) no size-state -> win link;
+(d) flip scheme. After fixing: 19 flagged, max |Z| 9 (real rate tails a little heavier than the Beta priors).
+
+**Flip structure measured on train** (`flip_time_probe.py`, conditions used for analysis only): stable machines
+never flip (0/192); drift 192/192 and shared 192/192 flip, at tau / cutoff median .70 / .68 (80% inside
+.62-.79 / .60-.74); tau scales with the cutoff (corr .77, sd ~13 ticks). **At a flip only polarity changes**
+(`flip_change_probe.py`): on/off-cell rates, P(1x | win) and the size-gate direction before vs after the flip are
+indistinguishable from a stable placebo (|d rate| ~.07 both; size-gate sign kept 99-100%).
+
+**Learned flip-time prior** (`flipprior.py`, option `flip_prior`, default off): EM histogram of relative flip
+position + no-flip mass on train histories, replacing adi's flat tau prior (flat prior reproduces adi to 5e-15).
+It learned p(no flip) = .32 and position .683 +/- .10 (truth recovered). Tuning **57.942 vs 58.156 (-0.215)**:
+long conditions unchanged (stable .0240 -> .0246, drift .0302 -> .0304, shared .0179), short .0547 -> .0692. The
+post-flip evidence already pins tau on long logs; on short logs a flip before the observed block is
+unidentifiable, so the learned prior overrides adi's tuned p_change_short = .05. Rejected.
+
+**Ceiling** (`ceiling.py`; fitted FINAL run on simulated machines with known true next-spin distribution,
+templates = validation machines, 3 replicates, bootstrap SEs): mean squared probability error, real vs simulated:
+stable .00414 vs .00348 (z +0.9), short .01095 vs .01280 (z -0.8), drift .00487 vs .00301 (z +1.9), shared
+.00497 vs .00306 (z +1.9). Stable and short sit at the ceiling the model implies. Drift and shared are ~1.6x worse
+in reality (borderline, p ~ .06 each). If that gap were fully real and closable it is worth at most ~+0.2 points.
+**Conclusion:** the generative structure (gate, polarity flip, rates, size state) is correct and our inference
+extracts what it implies; the remaining score is hidden per-machine rate noise. Achievable range ~58.1-58.3.
+
 ## Experiments 9-10: bidirectional win x size inference (REVERTED on audit; final stays 58.074)
 
 **Question:** do size observations update the win-structure posterior? **No (before this):** adi's size-split gate

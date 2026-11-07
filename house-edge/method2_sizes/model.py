@@ -30,6 +30,17 @@ class Model(GateModel):
         if self.win_model:
             self.win = importlib.import_module(self.win_model + ".model").Model(**self.win_kwargs).fit(pub)
             q, seq = load_split(pub, "train"); self.sizes.fit(q, seq)
+            if self.flip_prior:
+                from method2_sizes.flipprior import FlipPrior
+                self.flip = FlipPrior().fit(self.win, q, seq)
+            if self.miss_filter:   # experiment 12: exact marginalization over unobserved gate inputs (own gate code)
+                from method2_sizes.missfilter import MissFilter
+                self.mf = MissFilter(self.win.signal_priors).fit(q, seq)
+                if self.miss_filter == "joint":   # experiment 13: joint win x size hidden-category marginalization
+                    from method2_sizes.jointfilter import JointFilter
+                    g = self.sizes
+                    self.jf = JointFilter(self.mf, dict(wST=g.wST, cond=g.cond, part_prior=g.part_prior,
+                                                        levels=g.levels, split=g.split))
             return self
         return super().fit(pub)
 
@@ -46,11 +57,28 @@ class Model(GateModel):
                 P = joint_parts(self.win, self.sizes, rows, r, s)
                 out[r["query_id"]] = assemble(self.sizes, rows, r, s, P, fb, False, self.joint_beta)[0]
             return out
+        if self.flip_prior:   # experiment 11: learned flip-time prior replaces adi's flat tau prior
+            q, seq = load_split(pub, split); out = {}
+            for r in q:
+                s = seq[r["machine_id"]]; pw = min(1 - 1e-4, max(1e-4, self.flip.pwin(self.win, r, s)))
+                out[r["query_id"]] = [1 - pw] + [pw * x for x in self.sizes.predict(r, s)]
+            return out
         pw_pred = self.win.predict(pub, split)
         q, seq = load_split(pub, split); out = {}
+        if self.miss_filter:
+            from adi.model import is_short
         for r in q:
-            p = pw_pred[r["query_id"]]; pw = 1 - p[0] / sum(p)
-            out[r["query_id"]] = [1 - pw] + [pw * x for x in self.sizes.predict(r, seq[r["machine_id"]])]
+            p = pw_pred[r["query_id"]]; pw = 1 - p[0] / sum(p); s_ = seq[r["machine_id"]]
+            if self.miss_filter and is_short(s_):   # add the information the gate discards: P(win | sampled ticks) - P(win | without)
+                inc = None
+                if self.miss_filter == "joint":   # P(win) increment from the joint filter (size split of FINAL is kept)
+                    on, off = self.jf.run(r, s_, True), self.jf.run(r, s_, False)
+                    if on is not None and off is not None:
+                        inc = (1 - on[0]) - (1 - off[0])
+                if inc is None:
+                    inc = self.mf.pwin(r, s_, True) - self.mf.pwin(r, s_, False)
+                pw = min(.999, max(.001, pw + inc))
+            out[r["query_id"]] = [1 - pw] + [pw * x for x in self.sizes.predict(r, s_)]
         return out
 
     def __init__(self, sizes="npmle", size_lags=(1,), lag_strength=20.0, size_half_life=None,
@@ -60,8 +88,10 @@ class Model(GateModel):
                  gate_tied=False, gate_tie_weight=0.7, gate_joint_em=False, gate_joint_iters=30,
                  gate_learn_direction=False, gate_direction_strength=20.0,
                  twolag=None, twolag_pairs="m1", twolag_eps=0.2,
-                 win_model=None, win_kwargs=None, joint_feedback=None, joint_beta=1.0, **kw):
+                 win_model=None, win_kwargs=None, joint_feedback=None, joint_beta=1.0, flip_prior=False, miss_filter=False, **kw):
+        self.miss_filter = miss_filter
         self.joint_feedback, self.joint_beta = joint_feedback, joint_beta
+        self.flip_prior = flip_prior
         self.win_model, self.win_kwargs = win_model, dict(win_kwargs or {})
         base_kind = {"dirichlet": "dirichlet", "minka": "minka"}.get(sizes, "npmle")
         super().__init__(sizes="dirichlet" if base_kind == "dirichlet" else "npmle", **kw)
