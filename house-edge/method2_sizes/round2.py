@@ -17,7 +17,8 @@ from common.evaluate import folds, points, CONDITIONS
 
 ADI = {"max_lag": 12, "and_pairs": True, "prior_flips": True, "prune": 0.01, "floor": 0.05,
        "cell_prior": "learn", "cell_group": "type", "p_change_short": "learn",
-       "size_split": True}  # adi round 4 (0834904): keepcheck KEEP, full 57.787 -> 57.960, P(better)=1.000
+       "size_split": True,  # adi round 4 (0834904): keepcheck KEEP, full 57.787 -> 57.960, P(better)=1.000
+       "cell_signal": True}  # adi round 5 (926525a): keepcheck KEEP, full 57.960 -> 58.074, P(better)=0.999
 FINAL = dict(sizes="gate", gate_cell_prior="npmle", gate_couple=True, gate_couple_iters=20, gate_tied=True,
              gate_tie_weight="learn", gate_joint_em=True, win_model="adi", win_kwargs=ADI)
 

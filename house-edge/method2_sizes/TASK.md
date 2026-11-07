@@ -49,3 +49,6 @@ To measure size changes alone, keep the gate fixed (same Model settings) and cha
   rebuilt in out/main_entry/ (SHA e2686e96). Details: adi/FINDINGS.md "Round 4".
 - EXPERIMENT 8 (rejected): sparse two-lag size expert (`twolag=...`, twolag.py). Best variant -0.003 tuning;
   data drives its weight to the floor. Does not change the final (now Update 5, SHA e2686e96). See FINDINGS.md.
+- UPDATE 6 (made by Adi, at Adi's request): adi's signal-slope cell prior (`"cell_signal": True` in `ADI`, adi round 5).
+  Keep check vs previous final: tuning 58.156 (+0.076), audit 57.986 (+0.154), full 58.074 (+0.114), 4/4
+  conditions, bootstrap P=0.999. Upload files rebuilt in out/main_entry/ (SHA 56c5cd55).
