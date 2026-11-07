@@ -89,6 +89,31 @@ What was done, in order:
    so imputation would recover only a few more per machine. Low value.
 5. `relearn` (re-learning the structure prior under the cell prior): 55.423, no gain. Left off.
 
+## Combined: adi gate (C5) + method 2's GateSizes
+
+`sizes: "gate", gate_cell_prior: "npmle"` uses `method2_sizes.sizes.GateSizes` (Person B's best size model,
+imported unchanged). adi's model only changes the win probability and GateSizes only changes the size
+split, so the gains mostly add up:
+
+| model | tuning | audit | stable | short | drift | shared |
+| --- | --- | --- | --- | --- | --- | --- |
+| method1_gate (npmle sizes) | 55.054 | 54.795 | .0738 | .1313 | .0897 | .0646 |
+| adi C5 gate + npmle sizes | 55.676 | 55.196 | .0715 | .0967 | .0818 | .0607 |
+| method 1 gate + GateSizes (method2 best) | 56.038 | 56.377 | .0539 | .1249 | .0655 | .0386 |
+| adi C5 gate + GateSizes | 56.703 | 56.808 | .0517 | .0882 | .0577 | .0350 |
+| method 1 gate + GateSizes couple+tied (method2 best, fc6b2ab) | 56.999 | 56.974 | | | | |
+| **adi C5 gate + GateSizes couple+tied** | **57.685** | **57.427** | .0385 | .0641 | .0368 | .0212 |
+
+- Best: +0.69 tuning / +0.45 audit over method 2's best (couple+tied on method 1's gate), and +2.63 / +2.63
+  over method 1. GateSizes' coupling still reads method 1's win-gate posterior internally (it builds its own),
+  so the two models never share state.
+- Deterministic: two separate runs give byte-identical test CSVs (SHA-256 de89c80d...). Passes
+  `kit/check_submission.py`. About 85 s for fit + validation + test.
+- Command:
+  `python -m common.evaluate --method adi --data data/main --kwargs '{"max_lag": 12, "and_pairs": true, "prior_flips": true, "prune": 0.01, "floor": 0.05, "cell_prior": "learn", "cell_group": "type", "p_change_short": "learn", "sizes": "gate", "gate_cell_prior": "npmle", "gate_couple": true, "gate_couple_iters": 20, "gate_tied": true}' --test-out <csv>`
+- Possible next step: feed adi's win-gate posterior (wider family, learned cell priors) into GateSizes'
+  coupling instead of method 1's. That needs a hook in method2_sizes, so it's Person B's call.
+
 ## Not done yet (TASK.md order)
 C4 (L1 logistic fallback gate), C6 (episode-shared lag pairs/polarity), C7 (uniform-vs-learned robustness drill).
 Also untested: whether the per-type cell priors transfer to round 2 (they are re-learned from round 2's train

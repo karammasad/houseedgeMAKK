@@ -18,5 +18,5 @@ Standard library only. Settings are described in `model.py`. With default settin
 | `c5_decompose.py` | C5 diagnostic: how much error is win probability vs payout size |
 | `FINDINGS.md` | results and conclusions |
 
-Current best (tuning 55.676 / audit 55.196, about 77 s):
-`--kwargs '{"max_lag": 12, "and_pairs": true, "prior_flips": true, "prune": 0.01, "floor": 0.05, "cell_prior": "learn", "cell_group": "type", "p_change_short": "learn"}'`
+Current best, adi gate + method 2's GateSizes couple+tied (tuning 57.685 / audit 57.427, about 85 s):
+`--kwargs '{"max_lag": 12, "and_pairs": true, "prior_flips": true, "prune": 0.01, "floor": 0.05, "cell_prior": "learn", "cell_group": "type", "p_change_short": "learn", "sizes": "gate", "gate_cell_prior": "npmle", "gate_couple": true, "gate_couple_iters": 20, "gate_tied": true}'`

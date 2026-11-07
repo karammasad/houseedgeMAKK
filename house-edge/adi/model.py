@@ -16,10 +16,16 @@ Settings
   relearn      after fitting the cell prior, re-learn the structure prior with the shared cell prior (C5)
   p_change_short  flip-prior weight used for short logs (more than half the ticks missing); None = p_change,
                "learn" = pick from P_CHANGE_GRID by marginal likelihood of the short train logs (C5)
+  sizes        "npmle" (default, = method 1), "dirichlet", or "gate" (method2_sizes.GateSizes, imported as-is)
+  gate_*       passed to GateSizes when sizes="gate": gate_max_lag, gate_strength, gate_p_none,
+               gate_learn_prior, gate_half_life, gate_cell_prior, gate_couple, gate_couple_alpha, gate_couple_mix,
+               gate_couple_iters, gate_tied, gate_tie_weight (Person B's best: gate_cell_prior="npmle",
+               gate_couple=True, gate_couple_iters=20, gate_tied=True). GateSizes' coupling uses its own
+               method-1 win-gate posterior with this model's a/b/p_change/step/tau_min.
 Everything is learned in fit() from pub/train only. Probabilities = [1 - P(win), P(win) * size distribution].
 """
 from common.data import load_split
-from method2_sizes.sizes import NPMLESizes, DirichletSizes
+from method2_sizes.sizes import NPMLESizes, DirichletSizes, GateSizes  # read-only import of Person B's models
 from method1_gate.gate import learn_structure_prior as m1_prior
 from adi import gate as G
 
@@ -35,14 +41,28 @@ class Model:
     def __init__(self, max_lag=8, xor_order=2, and_pairs=False, and_max_lag=None, prior_flips=False,
                  prune=0.0, floor=0.1, none_floor=0.05, a=.5, b=.5, p_change=.5, step=2, tau_min=40,
                  cell_prior=None, cell_group="type_signal", relearn=False,
-                 p_change_short=None, sizes="npmle", size_strength=30.0):
+                 p_change_short=None, sizes="npmle", size_strength=30.0, gate_max_lag=8, gate_strength=4.0,
+                 gate_p_none=0.3, gate_learn_prior=True, gate_half_life=None, gate_cell_prior="beta",
+                 gate_couple=False, gate_couple_alpha=5.0, gate_couple_mix=0.1, gate_couple_iters=1,
+                 gate_tied=False, gate_tie_weight=0.7):
         self.cfg = dict(a=a, b=b, p_change=p_change, step=step, tau_min=tau_min)
         self.ST = G.structures(max_lag, xor_order, and_pairs, and_max_lag)
         self.prior_flips, self.prune, self.floor, self.none_floor = prior_flips, prune, floor, none_floor
         self.cell_prior, self.relearn, self.p_change_short = cell_prior, relearn, p_change_short
         self.cell_group = cell_group
         self.cellpriors = None if cell_prior in (None, "learn") else {(): tuple(cell_prior)}
-        self.sizes = NPMLESizes() if sizes == "npmle" else DirichletSizes(size_strength)
+        if sizes == "gate":
+            self.sizes = GateSizes(max_lag=gate_max_lag, strength=gate_strength, p_none=gate_p_none,
+                                   learn_prior=gate_learn_prior, half_life=gate_half_life, cell_prior=gate_cell_prior,
+                                   couple=gate_couple, couple_alpha=gate_couple_alpha, couple_mix=gate_couple_mix,
+                                   couple_iters=gate_couple_iters, win_cfg=self.cfg, tied=gate_tied,
+                                   tie_weight=gate_tie_weight)
+        elif sizes == "dirichlet":
+            self.sizes = DirichletSizes(size_strength)
+        elif sizes == "npmle":
+            self.sizes = NPMLESizes()
+        else:
+            raise ValueError(f"unknown sizes option {sizes!r}")
 
     def _raw_prior(self, q, seq):
         if self.prior_flips:
