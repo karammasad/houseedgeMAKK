@@ -17,15 +17,21 @@ from collections import defaultdict
 from multiprocessing import get_context
 from common.data import load_split, wins
 from adi.model import Model as AdiModel
+from method2_sizes.sizes import GateSizes
+from method4_ml.pooled import pooled_split
 from method4_ml.features3 import episode_examples, CELL_N
 from method4_ml.size_hmm import SizeHMM
 
 FEATURE_VERSION = "f3.2"
 HERE = os.path.dirname(os.path.abspath(__file__))
-# adi's best configuration (adi/FINDINGS.md): wide pruned family, learned cell priors, GateSizes couple + tied
+# adi's win-gate configuration (adi/FINDINGS.md): wide pruned family, learned cell priors. Its built-in sizes are only a
+# cheap placeholder here: the real size model is SIZES below, fit separately (optionally on every split's histories).
 GATE = {"max_lag": 12, "and_pairs": True, "prior_flips": True, "prune": 0.01, "floor": 0.05, "cell_prior": "learn",
-        "cell_group": "type", "p_change_short": "learn", "sizes": "gate", "gate_cell_prior": "npmle",
-        "gate_couple": True, "gate_couple_iters": 20, "gate_tied": True, "gate_tie_weight": 0.95, "gate_couple_mix": 0.03}
+        "cell_group": "type", "p_change_short": "learn", "sizes": "npmle"}
+# method2_sizes.GateSizes, Momin's FINAL (method2_sizes/round2.py): coupling to the win gate, two-state ("tied") size
+# gate with a learned tie weight, joint empirical-Bayes EM.
+SIZES = dict(max_lag=8, strength=4.0, p_none=0.3, learn_prior=True, cell_prior="npmle", couple=True, couple_alpha=5.0,
+             couple_mix=0.1, couple_iters=20, tied=True, tie_weight="learn", joint_em=True, joint_iters=30)
 _G = {}
 
 
@@ -71,7 +77,7 @@ class GateInit:
 
 class Model:
     def __init__(self, variant="v3", stack="hgb", n_estimators=150, max_depth=3, subsample=0.8, cells=False, K=24, K_short=24, t_min=100, splits="all", lr=0.03, max_leaf_nodes=15,
-                 min_samples_leaf=1000, l2=1.0, max_iter=400, seeds=3, blend=0.4, sizes="gate", gate=None,
+                 min_samples_leaf=1000, l2=1.0, max_iter=400, seeds=3, blend=0.4, sizes="gate", gate=None, size_kw=None, size_pool="train",
                  workers=None, cache=True, **v1kw):
         self.variant = variant
         if variant == "v1":
@@ -86,6 +92,7 @@ class Model:
         self.og = dict(learning_rate=lr, n_estimators=n_estimators, max_depth=max_depth, subsample=subsample,
                        min_samples_leaf=min_samples_leaf, max_features=0.7)
         self.gate_kw = dict(GATE if gate is None else gate)
+        self.size_kw = dict(SIZES if size_kw is None else size_kw); self.size_pool = tuple(size_pool.split("+")) if isinstance(size_pool, str) else tuple(size_pool)
         self.workers = workers or min(os.cpu_count() or 1, 8); self.cache = cache
 
     # ---------- gate model (fit on train, cached) ----------
@@ -97,6 +104,17 @@ class Model:
             if self.cache:
                 _save(path, gm)
         return gm
+
+    def _fit_sizes(self, pub, gm):
+        path = _cache_path("sizes", os.path.abspath(pub), json.dumps(self.gate_kw, sort_keys=True),
+                           json.dumps(self.size_kw, sort_keys=True), self.size_pool, FEATURE_VERSION)
+        g = _load(path) if self.cache else None
+        if g is None:
+            q, seq = pooled_split(pub, self.size_pool)     # histories only (train, optionally + validation/test)
+            g = GateSizes(win_cfg=gm.cfg, **self.size_kw).fit(q, seq)
+            if self.cache:
+                _save(path, g)
+        return g
 
     # ---------- features (cached) ----------
     def _features(self, pub, split, queries=False):
@@ -148,7 +166,7 @@ class Model:
         self.gm = self._fit_gate(pub)
         self.size_models = {}
         if self.sizes_kind in ("gate", "mix"):
-            self.size_models["gate"] = self.gm.sizes
+            self.size_models["gate"] = self._fit_sizes(pub, self.gm)
         if self.sizes_kind in ("hmm", "mix"):
             q, seq = load_split(pub, "train"); self.size_models["hmm"] = SizeHMM().fit(q, seq)
         splits = ["train", "validation", "test"] if self.splits == "all" else ["train"]

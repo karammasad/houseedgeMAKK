@@ -8,8 +8,8 @@ from method4_ml.model import Model, GATE
 PUB = "data/main"; tune, _ = folds(PUB)
 m = Model(blend=0).fit(PUB); base = m.predict(PUB, "validation")
 vq, vs = load_split(PUB, "validation"); tq, ts = load_split(PUB, "train")
-DEF = dict(max_lag=8, strength=4.0, p_none=0.3, learn_prior=True, half_life=None, cell_prior="npmle", couple=True,
-           couple_alpha=5.0, couple_mix=0.1, couple_iters=20, win_cfg=m.gm.cfg, tied=True, tie_weight=0.7)
+from method4_ml.model import SIZES
+DEF = {**SIZES, 'win_cfg': m.gm.cfg}
 def score(**over):
     t0 = time.time(); g = GateSizes(**{**DEF, **over}).fit(tq, ts); out = {}
     for r in vq:
