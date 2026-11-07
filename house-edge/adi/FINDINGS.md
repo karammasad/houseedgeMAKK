@@ -279,3 +279,32 @@ Round 2: the trees must be retrained on the new kit, offline with scikit-learn:
 `<venv>/bin/python -m adi.stack.export --data data/adaptation --out adi/stack/trees_adaptation.json`, then build with
 `--kwargs '{"trees": "trees_adaptation.json"}'`. If that isn't possible in time, ship method2_sizes FINAL
 (standard library, refits by itself).
+
+## Round 7: size-state win correction on adi's FINAL (inspired by method 4 v5) -> full 58.214 (KEEP)
+
+Idea taken from method4_ml v5: its stacker gains because it sees the size model's P(1x | win). The hidden size
+state also moves the win rate (adi round 4), and the size model (GateSizes) estimates that state better than the
+gate's own split. Instead of a 770-tree stacker, `adi/sizewin` adds a small logistic correction to FINAL, in pure
+Python, trained inside fit():
+
+  logit P'(win) = logit P_FINAL(win) + sum_type [c_on,t * d * P + c_off,t * d * (1 - P)],  d = P(1x|win) - type mean
+
+That's 6 numbers, fitted by L2 logistic regression (Newton's method) on train history ticks (features from ticks < t,
+label = whether tick t won), plus short-history masked copies. Sizes are FINAL's, unchanged.
+
+- First version also refit the base intercept and slope: tuning 58.096 (worse). The slope came out 0.93, making
+  the model less confident on long logs, which were already calibrated. Keeping FINAL's logit as a fixed offset
+  (the default, `free_base=False`) fixed it.
+- Learned size-state terms are negative for every type: a higher P(1x|win) means a lower win rate.
+
+| | tuning | audit | full | stable | short | drift | shared |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| FINAL (uploaded, 56c5cd55) | 58.156 | 57.986 | 58.074 | .0211 | .0617 | .0257 | .0242 |
+| adi.stack (method4 v5 port, round 6) | 58.241 | 58.142 | 58.192 | .0185 | .0574 | .0249 | .0235 |
+| **adi.sizewin (FINAL + size-state correction)** | 58.221 | **58.211** | **58.214** | .0190 | .0580 | .0237 | .0219 |
+| adi.sizewin trained on train+val+test histories | 58.212 | 58.224 | 58.215 | .0189 | .0575 | .0242 | .0221 |
+
+keepcheck vs FINAL: KEEP (P(better) = 0.992, 4/4 conditions). It beats the 770-tree port on audit and full
+validation with 6 numbers, refits itself in round 2 (no offline export), and is standard library only.
+Recommended entry: `python -m adi.make_entry --method adi.sizewin --data data/main --out <dir>`; files in
+adi/out/main_entry/.

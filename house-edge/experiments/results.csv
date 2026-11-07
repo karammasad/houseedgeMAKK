@@ -120,3 +120,5 @@ time,user,method,kwargs,note,tuning,audit,tune_stable,tune_short_history,tune_dr
 2026-11-07 15:01,kareem,method4_ml,"{""blend"":0}","v5 sanity: blend 0, adi size_split + Momin FINAL sizes (expect ~58.080)",58.0797,,0.02698,0.05772,0.03034,0.01721,219.1
 2026-11-07 15:44,kareem,method4_ml,{},"v5 final candidate: adi size_split + signal-shifted priors + Momin sizes + HGB stacker w/ size features, K=6",58.2364,58.1426,0.02175,0.05451,0.02753,0.01734,9.4
 2026-11-07 16:07,kareem,method4_ml,{},v5 recheck on pushed main (after method2 refactor),58.2364,58.1426,0.02175,0.05451,0.02753,0.01734,9.8
+2026-11-07 16:33,adinounou,adi.sizewin,{},adi round 7: size-state logistic win correction on FINAL,58.0964,,0.02515,0.05792,0.02953,0.01848,163.1
+2026-11-07 16:39,adinounou,adi.sizewin,{},adi round 7b: size-state terms only (FINAL logit fixed),58.2211,,0.02264,0.05414,0.02869,0.01676,166.6

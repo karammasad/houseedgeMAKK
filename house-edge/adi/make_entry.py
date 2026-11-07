@@ -1,6 +1,6 @@
 """adi's copy of method2_sizes/make_entry.py (itself a copy of tools/make_entry.py). Identical except it also packages
-adi's subpackage adi/stack/ including the exported tree checkpoint (trees_*.json), which the stdlib port of method4_ml
-v5 (`--method adi.stack`) loads at prediction time. scikit-learn parity files (*.sk_check.json) are left out.
+every adi subpackage (adi/stack/ with its exported tree checkpoint trees_*.json, adi/sizewin/, ...), so entries
+using `--method adi.stack` or `--method adi.sizewin` run. scikit-learn parity files (*.sk_check.json) are left out.
 
   python -m adi.make_entry --method adi.stack --data data/main --out build/main_stack
 
@@ -55,11 +55,15 @@ def main():
         for f in os.listdir(os.path.join(ROOT, pkg)):
             if f.endswith(".py"):
                 shutil.copy(os.path.join(ROOT, pkg, f), os.path.join(src, pkg, f))
-        if pkg == "adi":  # adi/stack: stdlib port of method4_ml v5 + its exported trees
-            os.makedirs(os.path.join(src, pkg, "stack"))
-            for f in os.listdir(os.path.join(ROOT, pkg, "stack")):
-                if f.endswith(".py") or (f.endswith(".json") and not f.endswith(".sk_check.json")):
-                    shutil.copy(os.path.join(ROOT, pkg, "stack", f), os.path.join(src, pkg, "stack", f))
+        if pkg == "adi":  # adi subpackages (stack/: exported trees, sizewin/: size-state correction, ...)
+            for sub in sorted(os.listdir(os.path.join(ROOT, pkg))):
+                d = os.path.join(ROOT, pkg, sub)
+                if not os.path.isfile(os.path.join(d, "__init__.py")):
+                    continue
+                os.makedirs(os.path.join(src, pkg, sub))
+                for f in os.listdir(d):
+                    if f.endswith(".py") or (f.endswith(".json") and not f.endswith(".sk_check.json")):
+                        shutil.copy(os.path.join(d, f), os.path.join(src, pkg, sub, f))
     with open(os.path.join(src, "predict.py"), "w") as f:
         f.write(PREDICT)
     with open(os.path.join(src, "entry_config.json"), "w") as f:
