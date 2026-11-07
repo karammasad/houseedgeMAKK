@@ -18,3 +18,22 @@ time,user,method,kwargs,note,tuning,audit,tune_stable,tune_short_history,tune_dr
 2026-11-07 12:24,mominhassan,method2_sizes,"{""sizes"":""lag"",""lag_strength"":100,""size_half_life"":128,""npmle_half_life"":128}",B6 / combo,55.2073,,0.07380,0.12622,0.08683,0.06040,14.5
 2026-11-07 12:25,mominhassan,method2_sizes,"{""sizes"":""lag"",""lag_strength"":100,""npmle_half_life"":64}",B final candidate: lag1 sizes s=100 + npmle hl64,55.2271,54.8510,0.07472,0.12452,0.08737,0.05909,13.1
 2026-11-07 12:25,mominhassan,method2_sizes,"{""sizes"":""lag"",""lag_strength"":100,""npmle_half_life"":64}",B candidate test CSV,55.2271,,0.07472,0.12452,0.08737,0.05909,13.4
+2026-11-07 12:21,adinounou,method1_gate,{},adi: baseline repro,55.0537,,0.07380,0.13134,0.08966,0.06459,9.3
+2026-11-07 12:23,adinounou,adi,{},adi: default should equal method1,55.0537,,0.07380,0.13134,0.08966,0.06459,8.6
+2026-11-07 12:23,adinounou,adi,"{""prior_flips"": true}",adi: structure prior learned with flips marginalized,55.0876,,0.07379,0.12874,0.08958,0.06459,8.9
+2026-11-07 12:23,adinounou,adi,"{""max_lag"": 12}",adi C2 family,54.8114,,0.07381,0.15035,0.08991,0.06459,15.1
+2026-11-07 12:23,adinounou,adi,"{""max_lag"": 12, ""prior_flips"": true}",adi C2 family,55.0153,,0.07379,0.13437,0.08967,0.06459,15.8
+2026-11-07 12:24,adinounou,adi,"{""and_pairs"": true}",adi C2 family,55.0732,,0.07371,0.12991,0.08962,0.06459,31.1
+2026-11-07 12:24,adinounou,adi,"{""and_pairs"": true, ""prior_flips"": true}",adi C2 family,55.0760,,0.07372,0.12970,0.08961,0.06459,31.1
+2026-11-07 12:25,adinounou,adi,"{""max_lag"": 12, ""and_pairs"": true, ""prior_flips"": true}",adi C2 family,54.4619,,0.07373,0.17878,0.08964,0.06459,68.0
+2026-11-07 12:26,adinounou,adi,"{""max_lag"": 12, ""and_pairs"": true, ""prior_flips"": true, ""prune"": 0.005, ""floor"": 0.05}",adi C3 prune/floor on widest family,55.1039,,0.07379,0.12745,0.08957,0.06459,30.8
+2026-11-07 12:27,adinounou,adi,"{""max_lag"": 12, ""and_pairs"": true, ""prior_flips"": true, ""prune"": 0.005, ""floor"": 0.1}",adi C3 prune/floor on widest family,55.1038,,0.07379,0.12746,0.08957,0.06459,30.9
+2026-11-07 12:27,adinounou,adi,"{""max_lag"": 12, ""and_pairs"": true, ""prior_flips"": true, ""prune"": 0.01, ""floor"": 0.05}",adi C3 prune/floor on widest family,55.1039,,0.07379,0.12745,0.08957,0.06459,31.1
+2026-11-07 12:27,adinounou,adi,"{""max_lag"": 12, ""and_pairs"": true, ""prior_flips"": true, ""prune"": 0.005, ""floor"": 0.02}",adi C3 lower floor,55.1040,,0.07379,0.12745,0.08957,0.06459,31.0
+2026-11-07 12:28,adinounou,adi,"{""max_lag"": 12, ""and_pairs"": true, ""prior_flips"": true, ""prune"": 0.01, ""floor"": 0.1}",adi C3 prune/floor on widest family,55.1038,,0.07379,0.12746,0.08957,0.06459,31.0
+2026-11-07 12:28,adinounou,adi,"{""max_lag"": 12, ""and_pairs"": true, ""prior_flips"": true, ""prune"": 0.005, ""floor"": 0.0}",adi C3 lower floor,55.1040,,0.07379,0.12744,0.08957,0.06459,31.1
+2026-11-07 12:28,adinounou,adi,"{""max_lag"": 12, ""and_pairs"": true, ""prior_flips"": true, ""prune"": 0.02, ""floor"": 0.05}",adi C3 prune/floor on widest family,55.1039,,0.07379,0.12745,0.08957,0.06459,31.0
+2026-11-07 12:28,adinounou,adi,"{""max_lag"": 12, ""and_pairs"": true, ""prior_flips"": true, ""prune"": 0.01, ""floor"": 0.05}",adi final candidate: wide family + flip-aware pruned prior,55.1039,54.8638,0.07379,0.12745,0.08957,0.06459,31.0
+2026-11-07 12:28,adinounou,method1_gate,{},adi: method1 audit for comparison,55.0537,54.7949,0.07380,0.13134,0.08966,0.06459,9.4
+2026-11-07 12:29,adinounou,adi,"{""max_lag"": 12, ""and_pairs"": true, ""prior_flips"": true, ""prune"": 0.02, ""floor"": 0.1}",adi C3 prune/floor on widest family,55.1038,,0.07379,0.12746,0.08957,0.06459,31.1
+2026-11-07 12:31,adinounou,adi,"{""max_lag"": 12, ""and_pairs"": true, ""prior_flips"": true, ""prune"": 0.01, ""floor"": 0.05}","adi final candidate, re-run after method2 update",55.1039,54.8638,0.07379,0.12745,0.08957,0.06459,30.0
