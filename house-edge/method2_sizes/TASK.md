@@ -22,3 +22,9 @@ Read ../AGENTS.md first.
 6. B6 Control: Dirichlet-multinomial with strength fitted per type by Minka's fixed-point iteration.
 
 To measure size changes alone, keep the gate fixed (same Model settings) and change only `sizes`.
+
+## Status (2026-11-07)
+- Done: B1 (lag-1 size covariate, `sizes="lag"`), B4 (`npmle_half_life`), B5 (`npmle_min_wins`: no effect),
+  B6 (`sizes="minka"`: worse). B2 skipped (episode ICC ≈ 0). B3 blocked (needs the gate's flip posterior from Person A).
+- Candidate: `{"sizes":"lag","lag_strength":100,"npmle_half_life":64}` → tuning 55.227 (+0.173), audit 54.851 (+0.056),
+  full validation via kit checker 55.044 (+0.117). Details in FINDINGS.md; outputs in out/.

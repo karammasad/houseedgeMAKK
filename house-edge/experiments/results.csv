@@ -1,0 +1,20 @@
+time,user,method,kwargs,note,tuning,audit,tune_stable,tune_short_history,tune_drift,tune_shared_change,seconds
+2026-11-07 12:21,mominhassan,method2_sizes,{},B baseline npmle (rerun),55.0537,,0.07380,0.13134,0.08966,0.06459,13.0
+2026-11-07 12:21,mominhassan,method2_sizes,"{""sizes"":""dirichlet""}",B baseline dirichlet (rerun),54.8842,,0.08050,0.13630,0.08905,0.06699,9.1
+2026-11-07 12:23,mominhassan,method2_sizes,"{""sizes"":""lag"",""size_lags"":[1],""lag_strength"":8}",B1 lag-conditioned sizes,54.7699,,0.08142,0.13768,0.09586,0.06701,14.4
+2026-11-07 12:23,mominhassan,method2_sizes,"{""sizes"":""lag"",""size_lags"":[1],""lag_strength"":20}",B1 lag-conditioned sizes,55.0282,,0.07700,0.12792,0.09210,0.06438,14.5
+2026-11-07 12:23,mominhassan,method2_sizes,"{""sizes"":""lag"",""size_lags"":[1],""lag_strength"":50}",B1 lag-conditioned sizes,55.1371,,0.07399,0.12692,0.08942,0.06247,14.5
+2026-11-07 12:23,mominhassan,method2_sizes,"{""sizes"":""lag"",""size_lags"":[1,2],""lag_strength"":20}",B1 lag-conditioned sizes,54.6617,,0.08587,0.13699,0.10166,0.06612,14.6
+2026-11-07 12:24,mominhassan,method2_sizes,"{""npmle_min_wins"":60}",B4/B5/B1 sweep,55.0542,,0.07378,0.13130,0.08962,0.06463,19.4
+2026-11-07 12:24,mominhassan,method2_sizes,"{""npmle_half_life"":64}",B4/B5/B1 sweep,55.1309,,0.07765,0.12701,0.08780,0.06081,21.0
+2026-11-07 12:24,mominhassan,method2_sizes,"{""sizes"":""lag"",""lag_strength"":200}",B4/B5/B1 sweep,55.1259,,0.07303,0.12949,0.08854,0.06261,21.1
+2026-11-07 12:24,mominhassan,method2_sizes,"{""npmle_half_life"":128}",B4/B5/B1 sweep,55.1271,,0.07532,0.12881,0.08797,0.06147,21.1
+2026-11-07 12:24,mominhassan,method2_sizes,"{""sizes"":""lag"",""lag_strength"":100}",B4/B5/B1 sweep,55.1463,,0.07311,0.12822,0.08857,0.06216,21.2
+2026-11-07 12:24,mominhassan,method2_sizes,"{""npmle_half_life"":256}",B4/B5/B1 sweep,55.0966,,0.07445,0.12996,0.08866,0.06293,21.2
+2026-11-07 12:24,mominhassan,method2_sizes,"{""npmle_min_wins"":20}",B4/B5/B1 sweep,55.0547,,0.07379,0.13134,0.08959,0.06458,21.7
+2026-11-07 12:24,mominhassan,method2_sizes,"{""sizes"":""minka""}",B6 / combo,54.9901,,0.08192,0.12821,0.08937,0.06492,10.9
+2026-11-07 12:24,mominhassan,method2_sizes,"{""sizes"":""lag"",""lag_strength"":100,""npmle_half_life"":128}",B6 / combo,55.2073,,0.07376,0.12611,0.08753,0.05986,14.4
+2026-11-07 12:24,mominhassan,method2_sizes,"{""sizes"":""lag"",""lag_strength"":100,""npmle_half_life"":64}",B6 / combo,55.2271,,0.07472,0.12452,0.08737,0.05909,14.4
+2026-11-07 12:24,mominhassan,method2_sizes,"{""sizes"":""lag"",""lag_strength"":100,""size_half_life"":128,""npmle_half_life"":128}",B6 / combo,55.2073,,0.07380,0.12622,0.08683,0.06040,14.5
+2026-11-07 12:25,mominhassan,method2_sizes,"{""sizes"":""lag"",""lag_strength"":100,""npmle_half_life"":64}",B final candidate: lag1 sizes s=100 + npmle hl64,55.2271,54.8510,0.07472,0.12452,0.08737,0.05909,13.1
+2026-11-07 12:25,mominhassan,method2_sizes,"{""sizes"":""lag"",""lag_strength"":100,""npmle_half_life"":64}",B candidate test CSV,55.2271,,0.07472,0.12452,0.08737,0.05909,13.4
