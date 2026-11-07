@@ -248,3 +248,34 @@ The stacker's earlier +0.055 has mostly been absorbed by the size split and sign
 Fix made for compatibility: `gate.gate_value` now handles the "xs"/"xst" forms (returns the pair's XOR bit).
 method4's features call it, and it crashed with int('') before. adi's own predictions are unchanged
 (FINAL rebuilds to 56c5cd55).
+
+## Round 6: method4_ml v5 (Kareem) shipped with the standard library only -> 58.19 (KEEP)
+
+method4_ml v5 is the team's most accurate model (full 58.190), but its gradient-boosted stacker needs scikit-learn
+at prediction time, which AGENTS rule 4 doesn't allow. Everything else in it (adi gate with signal shift, method 2
+GateSizes, leakage-safe features) is standard library. So:
+
+1. `adi/stack/export.py` (run offline, scikit-learn 1.9.1 in a temporary venv) trains v5 exactly as
+   method4_ml does (its defaults, cache off) and dumps all 770 trees (3 seeds) to `adi/stack/trees_main.json`
+   (~1 MB), plus scikit-learn's own probabilities (`*.sk_check.json`) for a parity check.
+2. `adi/stack/model.py` (`--method adi.stack`, standard library only) imports method4_ml's gate / size / feature
+   code read-only and evaluates the saved trees in pure Python. The trees are a trained checkpoint, which the
+   participant guide allows.
+
+Parity, on system Python with no scikit-learn or numpy installed: max |pure Python - scikit-learn| = 3.3e-16 over all
+768 validation and 1536 test queries.
+
+| | tuning | audit | full | stable | short | drift | shared |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| FINAL (uploaded, 56c5cd55) | 58.156 | 57.986 | 58.074 | .0211 | .0617 | .0257 | .0242 |
+| **adi.stack (method4 v5, stdlib)** | **58.241** | **58.142** | **58.192** | .0185 | .0574 | .0249 | .0235 |
+
+keepcheck: KEEP, bootstrap P(better) = 0.990, 4/4 conditions better, 151 s.
+
+Packaging: `python -m adi.make_entry --method adi.stack --data data/main --out <dir>` (a copy of method2's builder
+that also packages adi/stack/ and the tree JSON). Upload files: adi/out/main_entry/.
+
+Round 2: the trees must be retrained on the new kit, offline with scikit-learn:
+`<venv>/bin/python -m adi.stack.export --data data/adaptation --out adi/stack/trees_adaptation.json`, then build with
+`--kwargs '{"trees": "trees_adaptation.json"}'`. If that isn't possible in time, ship method2_sizes FINAL
+(standard library, refits by itself).
