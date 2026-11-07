@@ -122,3 +122,4 @@ time,user,method,kwargs,note,tuning,audit,tune_stable,tune_short_history,tune_dr
 2026-11-07 16:07,kareem,method4_ml,{},v5 recheck on pushed main (after method2 refactor),58.2364,58.1426,0.02175,0.05451,0.02753,0.01734,9.8
 2026-11-07 16:33,adinounou,adi.sizewin,{},adi round 7: size-state logistic win correction on FINAL,58.0964,,0.02515,0.05792,0.02953,0.01848,163.1
 2026-11-07 16:39,adinounou,adi.sizewin,{},adi round 7b: size-state terms only (FINAL logit fixed),58.2211,,0.02264,0.05414,0.02869,0.01676,166.6
+2026-11-07 16:45,kareem,method4_ml,{},v6: bag of 5 tick samples (selection-luck fix),58.2448,58.1531,0.02149,0.05318,0.02930,0.01657,30.2

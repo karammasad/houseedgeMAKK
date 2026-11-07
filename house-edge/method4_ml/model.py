@@ -75,7 +75,7 @@ class GateInit:
 
 class Model:
     def __init__(self, variant="v3", stack="hgb", n_estimators=150, max_depth=3, subsample=0.8, K=6, K_short=6, t_min=100, splits="all", lr=0.03, max_leaf_nodes=15,
-                 min_samples_leaf=1000, l2=1.0, max_iter=400, seeds=3, blend=0.4, sizes="gate", gate=None, size_kw=None, size_pool="train", signal_shift=True, size_feat=True, size_stack=False, size_blend=0.5,
+                 min_samples_leaf=1000, l2=1.0, max_iter=400, seeds=3, blend=0.4, sizes="gate", gate=None, size_kw=None, size_pool="train", signal_shift=True, size_feat=True, size_stack=False, size_blend=0.5, tick_seed=0, bags=5,
                  workers=None, cache=True, **v1kw):
         self.variant = variant
         if variant == "v1":
@@ -87,6 +87,8 @@ class Model:
                         n_iter_no_change=30)
         self.seeds, self.blend, self.sizes_kind, self.signal_shift = seeds, blend, sizes, signal_shift
         self.size_feat, self.size_stack, self.size_blend = size_feat, size_stack, size_blend
+        self.tick_seed = tick_seed   # which random history ticks become training examples (0 = original sample)
+        self.bags = bags             # bagging: stackers trained on `bags` independent tick samples, probabilities averaged
         self.stack = stack
         self.og = dict(learning_rate=lr, n_estimators=n_estimators, max_depth=max_depth, subsample=subsample,
                        min_samples_leaf=min_samples_leaf, max_features=0.7)
@@ -119,7 +121,7 @@ class Model:
 
     # ---------- features (cached) ----------
     def _features(self, pub, split, queries=False):
-        path = _cache_path(os.path.abspath(pub), split, queries, self.K, self.K_short, self.t_min,
+        path = _cache_path(os.path.abspath(pub), split, queries, self.K, self.K_short, self.t_min, self.tick_seed if not queries else 0,
                            json.dumps(self.gate_kw, sort_keys=True), self.signal_shift, self.size_feat,
                            json.dumps(self.size_kw, sort_keys=True), FEATURE_VERSION)
         hit = _load(path) if self.cache else None
@@ -133,11 +135,11 @@ class Model:
             ms = eps[e]; cut = ms[0]["cutoff"]; sub = {r["machine_id"]: seq[r["machine_id"]] for r in ms}
             if queries:
                 jobs.append((ms, sub, [cut])); continue
-            rng = random.Random(_seed(e, self.K, self.t_min)); cand = list(range(self.t_min, cut))
+            rng = random.Random(_seed(e, self.K, self.t_min, *([self.tick_seed] if self.tick_seed else []))); cand = list(range(self.t_min, cut))
             jobs.append((ms, sub, sorted(rng.sample(cand, min(self.K, len(cand))))))
             # short-history augmentation: mask the past like the short_history condition (40 recent + 24 older)
             if self.K_short and all(min(v) >= 0 for v in sub.values()):
-                rng = random.Random(_seed(e, "short", self.K_short, self.t_min)); lo = max(self.t_min, 64)
+                rng = random.Random(_seed(e, "short", self.K_short, self.t_min, *([self.tick_seed] if self.tick_seed else []))); lo = max(self.t_min, 64)
                 for t in sorted(rng.sample(range(lo, cut), min(self.K_short, cut - lo))):
                     msub = {}
                     for mid, v in sub.items():
@@ -172,17 +174,21 @@ class Model:
         if self.sizes_kind in ("hmm", "mix"):
             q, seq = load_split(pub, "train"); self.size_models["hmm"] = SizeHMM().fit(q, seq)
         splits = ["train", "validation", "test"] if self.splits == "all" else ["train"]
-        X, y = [], []
-        for s in splits:
-            if os.path.exists(os.path.join(pub, s, "history.csv")):
-                a, b, _ = self._features(pub, s); X += a; y += b
-        self.n_train = len(X); ypay = y; y = [int(v > 0) for v in ypay]
-        X = self._sel(X)
-        if self.stack == "offset":
-            from sklearn.ensemble import GradientBoostingClassifier
-            self.clfs = [GradientBoostingClassifier(init=GateInit(), random_state=k, **self.og).fit(X, y) for k in range(self.seeds)]
-        else:
-            self.clfs = [HistGradientBoostingClassifier(random_state=k, **self.gbm).fit(X, y) for k in range(self.seeds)]
+        self.clfs = []; base_seed = self.tick_seed
+        for bag in range(self.bags):     # each bag: its own random training ticks (selection-luck reduction, analysis/bagging.py)
+            self.tick_seed = base_seed + bag
+            X, y = [], []
+            for s in splits:
+                if os.path.exists(os.path.join(pub, s, "history.csv")):
+                    a, b, _ = self._features(pub, s); X += a; y += b
+            self.n_train = len(X); ypay = y; y = [int(v > 0) for v in ypay]
+            X = self._sel(X)
+            if self.stack == "offset":
+                from sklearn.ensemble import GradientBoostingClassifier
+                self.clfs += [GradientBoostingClassifier(init=GateInit(), random_state=k, **self.og).fit(X, y) for k in range(self.seeds)]
+            else:
+                self.clfs += [HistGradientBoostingClassifier(random_state=k, **self.gbm).fit(X, y) for k in range(self.seeds)]
+        self.tick_seed = base_seed
         self.sclfs = []
         if self.size_stack:    # P(1x | win) stacker on the same features, winning ticks only
             wi = [i for i, v in enumerate(ypay) if v > 0]; Xs = X[wi]; ys = [int(ypay[i] == 1) for i in wi]

@@ -5,7 +5,11 @@ by the frozen reference per condition; points = 60 / (1 + mean ratio). Validatio
 split). Rule: select on tuning only; check audit once per final candidate; adopt only if both halves move the same way.
 All validation-target reads below are in analysis/ scripts (diagnosis), never in fit/predict.
 
-## Current strongest model (immutable baseline for this round)
+## Current strongest model
+v6 = v5 + bagging over 5 tick samples: tuning 58.245 / audit 58.153 / full 58.199. Honest expected gain over a typical single
+tick sample: +0.033 full (v5's 58.190 was partly sampling luck; mean single sample 58.166).
+
+## Previous baseline (immutable reference for the research round)
 v5 (`model.py`, commit a0e40e9): tuning 58.236 / audit 58.143 / full 58.190 (kit checker 58.189711).
 Keep-check vs team FINAL (58.156 / 57.986 / 58.074): bootstrap P(better) .987, 4/4 conditions, 241 s -> KEEP.
 
@@ -45,6 +49,10 @@ Each: mechanism -> evidence -> falsifier -> result. Gains are vs the stated base
 | 15 | More data for priors: learn from val/test histories (J) | pooled priors and sizes | FLAT: +0.035 (priors), 0 (sizes). |
 | 16 | adi's own `cell_signal` vs my `signal_shift` (teammate code) | full pipeline, alone and combined | EQUIVALENT: gate 58.156 both; pipeline 58.233 (cell_signal) vs 58.236 (mine); combined = cell_signal alone. v5 unchanged. |
 | 17 | Short logs waste their 24 isolated older ticks (J/L) | mask long val machines: last 40 / + isolated / + isolated with lag inputs revealed (`analysis/short_isolated_bound.py`) | Ceiling .00483 -> .00325 MSE, but it also reveals ~144 extra usable ticks. Marginalizing only the missing inputs recovers mixture-rate information, which the isolated ticks already give today (.00502 -> .00483, 4%). Estimated +0.03 points: NOT BUILT (cost > value before round 2). |
+
+| 18 | Raw history holds signal v5 ignores (a sequence model could find it) (C/I) | cross-fitted GBM on raw lags 1-60, counts, neighbours -> v5 errors, 5 fold seeds (`analysis/raw_info.py`) | WIN: none (R^2 -0.11, all seeds < 0): sequence models ruled out for P(win). SIZE: R^2 +0.068 (+.04 to +.10), carried by whole-history payout counts; size model is calibrated except jackpot slope .90 (`analysis/size_shrink.py`); estimated value <= +0.04, not pursued. |
+| 19 | Size evidence should update the win structure (short logs) | read Method 2 experiments 9-10 | ALREADY FALSIFIED by Method 2 (tuning +.097, audit -.015, train CV flat). Not repeated. |
+| 20 | Stacker variance from WHICH ticks are sampled (D: variance) | 5 independent tick samples; bag of 3 / 5 (`analysis/bagging.py`) | SELECTION BIAS FOUND: v5's sample 0 was the luckiest of 5 (full 58.119-58.190, mean 58.166). Bag of 5: 58.245 / 58.153 / full 58.199, above every single sample on both halves. ADOPTED as v6 (`bags=5`). |
 
 Eliminated classes: change-model shape (4, 5, 6, 7), cross-machine information (10, 11), richer population priors (8, 9),
 more learner capacity / data / objective tweaks (3, 12, 13, 15).
