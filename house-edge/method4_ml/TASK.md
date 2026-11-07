@@ -10,23 +10,28 @@ Gradient learners can't discover parities from raw inputs (Shalev-Shwartz et al.
 - `model.py`: scikit-learn HistGradientBoostingClassifier on train-history ticks (subsampled to 150k).
   Score: 48.60 tuning (Method 1: 55.05). Needs `pip install scikit-learn`; cannot ship yet (see AGENTS.md rule 4).
 
-## v2 (current, model.py) - tuning 55.45, audit 55.26 (Method 1: 55.05 / 54.79)
-- `model.py`: GBM stacker. P(win) = 0.8 * GBM + 0.2 * Method 1. GBM features (`features2.py`): Method 1 posterior
-  summaries at tick t (P(win), P(win|no change), P(change), P(no gate), top-structure mass, change recency),
-  the other episode machines' change signals at t, lag wins 1..8, recent win rates. Training ticks: K=24 per
-  episode from train + validation/test HISTORIES, plus K_short=24 per long episode with the past masked like
-  short_history (40 recent + 24 older ticks). Sizes: `size_hmm.py` (two-state size HMM, EM on train).
-- Tuning ratios: stable 0.075, short 0.111, drift 0.087, shared 0.055 (M1: 0.074, 0.131, 0.090, 0.065).
-- Runtime: ~150 s fit+test on 8 cores (features in a process pool); about 4x that on 2 cores. Deterministic.
-- Old baseline: `--kwargs '{"variant":"v1"}'` (48.60). Sweeps: `python -m method4_ml.sweep --grid '{...}'`.
-- Flat (within 0.15, not adopted): GBM grid lr/leaves/min_leaf/l2, K 48, K_short 48, sizes=mix/npmle, size EM on all splits.
+## v3 (current, model.py): tuning 57.737, audit 57.529
+Base = adi's gate + method2_sizes.GateSizes (couple + tied), imported read-only: 57.685 / 57.427 on its own.
+On top: HistGradientBoosting stacker on gate-posterior features (features3.py), lr .03, 15 leaves, min_samples_leaf 1000,
+3 seeds, P(win) = 0.4 * GBM + 0.6 * gate. Trained on K=24 ticks per episode from train + val/test HISTORIES, plus K_short=24
+masked short-history copies. Gain over the base is only +0.05 tuning / +0.10 audit: BELOW the 0.15 adoption bar (rule 6).
+The base does nearly all the work; honest recommendation: ship adi's model unless the stacker clears the bar in round 2.
+Runtime 143 s fit + test on 8 cores, byte-identical rerun, needs scikit-learn (cannot ship, rule 4).
+Tried and flat (<= +0.04, not adopted): per-structure cell-stat features, offset boosting from the gate logit (57.713),
+averaging gate variants (adi + method 1: worse), priors learned on train+val+test histories (+0.035, 3x slower),
+signal-aware cell-prior means (`signal_prior.py`, 57.659: worse), GBM grid (lr .01-.1, leaves 7-31, min_leaf 100-3000, l2 1-10).
+Remaining error is win-side: worst misses are jackpot machines in their "on" cell (few observations; on-rate sd .15, corr .5 with
+signal but not recoverable); episode-mates share rates only weakly (ICC .07-.09). With true P(win) the score would be 59.4.
+Tools: `python -m method4_ml.sweep --grid '{...}' --curve` (tuning half only), `analysis/` scripts.
 
+## v2 (superseded; 55.45 / 55.26): GBM stacker on Method 1 + two-state size HMM
 ## Data findings (method4_ml/analysis/, validation targets read for ANALYSIS ONLY)
 - True size distribution given a win takes exactly TWO values per machine type (all 768 validation queries),
   differing mainly in the 1x/2x split; independent of signal, of the win state and of the gate cell.
-- That state is only weakly identifiable from history: even with the true distributions and a confident history
-  posterior (>0.95), it matches the cutoff state ~77%. Recent wins predict no better than old ones; no lag,
-  XOR pair or neighbour explains it. Treat as hidden per-spin noise; EM-learned blurred emissions ~ optimal.
+- CORRECTION (v3): my first pass called this state unpredictable. Wrong. Method 2 (method2_sizes/FINDINGS.md) showed it
+  follows the payout CATEGORY (loss / 1x / big) at one earlier lag per machine; my tests only used win/loss lags and XOR
+  pairs, so they missed it. method2_sizes.GateSizes (couple + tied) captures it; v3 uses it. My two-state HMM
+  (size_hmm.py, history-only, no lag) is kept only as an option (sizes="hmm"/"mix"); it is ~2 points worse.
 - Error split (Method 1): true P(win) alone -> 57.2, true sizes alone -> 57.6, but the size gain is mostly
   unreachable (see above). Remaining reachable headroom is in the win model, especially short histories.
 - True P(win) is bimodal (logit mostly -5..-2 and 1..3), consistent with gated cells plus drift.
