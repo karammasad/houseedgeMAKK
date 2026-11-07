@@ -18,7 +18,7 @@ from common.evaluate import folds, points, CONDITIONS
 ADI = {"max_lag": 12, "and_pairs": True, "prior_flips": True, "prune": 0.01, "floor": 0.05,
        "cell_prior": "learn", "cell_group": "type", "p_change_short": "learn"}
 FINAL = dict(sizes="gate", gate_cell_prior="npmle", gate_couple=True, gate_couple_iters=20, gate_tied=True,
-             gate_tie_weight="learn", win_model="adi", win_kwargs=ADI)
+             gate_tie_weight="learn", gate_joint_em=True, win_model="adi", win_kwargs=ADI)
 
 
 def learned(model):

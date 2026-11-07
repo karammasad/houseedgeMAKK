@@ -1,5 +1,11 @@
 # Method 2 findings: payout sizes given a win
 
+## ★★★★ Update 4: joint EM (current final)
+Training now fits the tie weight, split prior, lag prior and coupling table jointly by EM over every
+(size lag, cell shape) instead of at each machine's best free lag (selection bias). Main effect: split prior
+big-vs-rest .58 → .96, which sharpens short histories. Final: tuning 57.901, audit 57.665, full 57.787;
+short .071 → .064. Details: `python -m method2_sizes.joint_em_compare`.
+
 ## ★★★ Update 3: current best and team recommendation → see TEAM_SUMMARY.md
 adi C5 gate × method 2 sizes (coupled + tied, learned tie weight): tuning 57.746, audit 57.490, full 57.622.
 Error decomposition: 79% of remaining error is the win side (jackpot win-rate estimation), 21% sizes.

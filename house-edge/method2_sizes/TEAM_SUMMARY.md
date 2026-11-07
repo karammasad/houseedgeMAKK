@@ -1,7 +1,7 @@
 # Method 2 → team summary (for Person A, Adi / Person C, Person D)
 
 ## Recommendation for the main entry
-**Adi's C5 win gate × Method 2's sizes (coupled + tied, learned tie weight).**
+**Adi's C5 win gate × Method 2's sizes (coupled + tied, learned tie weight, joint EM).** Full validation 57.787.
 
 | model | tuning | audit | full val | stable | short | drift | shared |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -9,7 +9,8 @@
 | adi C5 gate + NPMLE sizes | 55.676 | 55.196 | | | | | |
 | method 1 gate + method 2 sizes (fc6b2ab) | 56.999 | 56.974 | 56.985 | .034 | .107 | .039 | .032 |
 | adi gate + method 2 sizes (= adi b072457) | 57.685 | 57.427 | 57.560 | .033 | .073 | .033 | .030 |
-| **+ learned tie weight (this commit)** | **57.746** | **57.490** | **57.622** | **.033** | **.071** | **.032** | **.029** |
+| + learned tie weight | 57.746 | 57.490 | 57.622 | .033 | .071 | .032 | .029 |
+| **+ joint EM (current final)** | **57.901** | **57.665** | **57.787** | **.032** | **.064** | **.030** | **.027** |
 
 Full-validation ratios use the kit metric. Last row vs the row above: paired episode bootstrap P(better) = 1.00,
 4/4 conditions better. Entry path (fit + test predict) 138 s, byte-identical rerun, CSV passes the checker.
@@ -22,7 +23,7 @@ Two identical ways to run it:
 `tools/make_entry.py` stages only `common/` and `method*/`, so entries using Adi's gate fail on the runner with
 `No module named 'adi'`. `method2_sizes/make_entry.py` is an identical copy that also packages `adi/`
 (one-line difference, `EXTRA_PKGS`). Verified end to end: build, kit check, zip, fresh unzip + rerun is
-byte-identical (CSV SHA-256 d39f5332..., about 4.8 min for the whole build):
+byte-identical (CSV SHA-256 450755db..., about 4.8 min for the whole build):
 `python -m method2_sizes.make_entry --method method2_sizes --kwargs "$(python3 -c 'import json,method2_sizes.round2 as r; print(json.dumps(r.FINAL))')" --data data/main --out build/main_m2`
 Upload `build/main_m2/submission.csv` + `build/main_m2/entry.zip`. Adi's `--method adi` entries can use this
 builder too. Person A: fold the same one-line change into tools/ whenever convenient.

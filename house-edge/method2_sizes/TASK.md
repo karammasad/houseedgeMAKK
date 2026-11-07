@@ -37,3 +37,6 @@ To measure size changes alone, keep the gate fixed (same Model settings) and cha
 - UPDATE 3: stacked on adi's C5 gate (`win_model="adi"`) + learned tie weight → tuning 57.746, audit 57.490,
   full validation 57.622. Final settings = FINAL in round2.py. Round-two runbook: `python -m method2_sizes.round2`.
   Packaging: use `python -m method2_sizes.make_entry` (copy that also packages adi/; verified rerun-identical).
+- UPDATE 4: joint empirical-Bayes EM promoted (`gate_joint_em=True` in FINAL). Keep check vs previous final:
+  tuning 57.901 (+0.155), audit 57.665 (+0.175), full 57.787 (+0.165), 4/4 conditions, bootstrap P=1.00.
+  Upload files rebuilt in out/main_entry/ (SHA 450755db).
