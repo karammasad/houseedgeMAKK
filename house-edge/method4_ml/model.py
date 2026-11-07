@@ -25,7 +25,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # adi's best configuration (adi/FINDINGS.md): wide pruned family, learned cell priors, GateSizes couple + tied
 GATE = {"max_lag": 12, "and_pairs": True, "prior_flips": True, "prune": 0.01, "floor": 0.05, "cell_prior": "learn",
         "cell_group": "type", "p_change_short": "learn", "sizes": "gate", "gate_cell_prior": "npmle",
-        "gate_couple": True, "gate_couple_iters": 20, "gate_tied": True}
+        "gate_couple": True, "gate_couple_iters": 20, "gate_tied": True, "gate_tie_weight": 0.95, "gate_couple_mix": 0.03}
 _G = {}
 
 

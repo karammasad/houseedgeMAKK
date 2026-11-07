@@ -106,3 +106,5 @@ time,user,method,kwargs,note,tuning,audit,tune_stable,tune_short_history,tune_dr
 2026-11-07 13:25,kareem,method4_ml,{},"v3.2 + per-structure cell stats features, blend .8",57.5722,,0.03826,0.07115,0.03726,0.02200,138.5
 2026-11-07 14:01,kareem,method4_ml,{},v3 tuned: adi gate + GateSizes + HGB stacker lr.03 leaf15 minleaf1000 cells off blend .4,57.7374,57.5286,0.03581,0.06294,0.03618,0.02182,14.3
 2026-11-07 14:07,kareem,method4_ml,{},v3 recheck after rebase onto teammates' latest method2/adi,57.7374,57.5286,0.03581,0.06294,0.03618,0.02182,153.6
+2026-11-07 14:23,kareem,method4_ml,{},v3.1: GateSizes tie_weight .95 couple_mix .03 (tuned on tuning half) + HGB stacker,57.8134,57.6056,0.03527,0.06006,0.03496,0.02100,154.0
+2026-11-07 14:32,kareem,method4_ml,{},v3.1 recheck after rebase onto method2 joint-EM commits,57.8134,57.6056,0.03527,0.06006,0.03496,0.02100,153.6

@@ -10,19 +10,25 @@ Gradient learners can't discover parities from raw inputs (Shalev-Shwartz et al.
 - `model.py`: scikit-learn HistGradientBoostingClassifier on train-history ticks (subsampled to 150k).
   Score: 48.60 tuning (Method 1: 55.05). Needs `pip install scikit-learn`; cannot ship yet (see AGENTS.md rule 4).
 
-## v3 (current, model.py): tuning 57.737, audit 57.529
-Base = adi's gate + method2_sizes.GateSizes (couple + tied), imported read-only: 57.685 / 57.427 on its own.
+## v3.1 (current, model.py): tuning 57.813, audit 57.606
+Base = adi's gate + method2_sizes.GateSizes (couple + tied), imported read-only (57.685 / 57.427 alone). Tuned GateSizes:
+gate_tie_weight .95 (was .7), gate_couple_mix .03 (was .1): +0.08 on both halves. CAUTION: tie_weight .95 trusts the two-state
+size structure more; if round 2 changes the size mechanism, set it back to .7 (free cells remain either way).
 On top: HistGradientBoosting stacker on gate-posterior features (features3.py), lr .03, 15 leaves, min_samples_leaf 1000,
-3 seeds, P(win) = 0.4 * GBM + 0.6 * gate. Trained on K=24 ticks per episode from train + val/test HISTORIES, plus K_short=24
-masked short-history copies. Gain over the base is only +0.05 tuning / +0.10 audit: BELOW the 0.15 adoption bar (rule 6).
-The base does nearly all the work; honest recommendation: ship adi's model unless the stacker clears the bar in round 2.
-Runtime 143 s fit + test on 8 cores, byte-identical rerun, needs scikit-learn (cannot ship, rule 4).
-Tried and flat (<= +0.04, not adopted): per-structure cell-stat features, offset boosting from the gate logit (57.713),
-averaging gate variants (adi + method 1: worse), priors learned on train+val+test histories (+0.035, 3x slower),
-signal-aware cell-prior means (`signal_prior.py`, 57.659: worse), GBM grid (lr .01-.1, leaves 7-31, min_leaf 100-3000, l2 1-10).
-Remaining error is win-side: worst misses are jackpot machines in their "on" cell (few observations; on-rate sd .15, corr .5 with
-signal but not recoverable); episode-mates share rates only weakly (ICC .07-.09). With true P(win) the score would be 59.4.
-Tools: `python -m method4_ml.sweep --grid '{...}' --curve` (tuning half only), `analysis/` scripts.
+3 seeds, P(win) = 0.4 * GBM + 0.6 * gate. Trained on K=24 ticks/episode from train + val/test HISTORIES plus K_short=24 masked
+short-history copies. Total gain over the base: +0.13 tuning / +0.18 audit (stacker alone +0.05 / +0.10: below the 0.15 bar).
+Runtime 154 s fit + test on 8 cores; byte-identical rerun; needs scikit-learn (cannot ship until organizers confirm, rule 4).
+PACKAGING: tools/make_entry.py omits adi/ and requirements.txt, so it would fail on the runner. Use
+`python -m method4_ml.make_entry --data data/main --out build/main_m4` (packages adi/, pins scikit-learn stack, cache off;
+verified: checker-valid, unzipped rerun byte-identical).
+Tried and flat (<= +0.04, not adopted): mixture-of-Betas cell priors per type x signal (57.69, mixprior.py), per-structure cell
+stats, offset boosting (57.713), averaging gate variants, priors from train+val+test histories (+0.035, 3x slower), signal-aware
+means (57.659), every gate setting (p_change, tau_min, step, a, b, p_change_short: within +-0.03), GateSizes strength / p_none /
+prior_floor / half_life, GBM grid (lr .01-.1, leaves 7-31, min_leaf 100-3000, l2 1-10).
+Data checks (analysis/): no structure sharing inside an episode (33.1% vs 33.5% chance), neighbour machines add nothing to the win
+gate, win gate is XOR of win bits only (no payout-category dependence), episode rate ICC .07-.09, splits consistent (no leakage,
+duplicates or shifts; ~1% constant/empty histories). Remaining error is per-machine rate noise, mostly jackpot "on" cells.
+With the true P(win) the score would be 59.4; with true sizes 58.3.
 
 ## v2 (superseded; 55.45 / 55.26): GBM stacker on Method 1 + two-state size HMM
 ## Data findings (method4_ml/analysis/, validation targets read for ANALYSIS ONLY)
