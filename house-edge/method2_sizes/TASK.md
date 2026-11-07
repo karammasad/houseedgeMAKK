@@ -30,3 +30,7 @@ To measure size changes alone, keep the gate fixed (same Model settings) and cha
   full validation via kit checker 55.044 (+0.117). Details in FINDINGS.md; outputs in out/.
 - UPDATE: size gate found (see top of FINDINGS.md). New candidate `{"sizes":"gate","gate_cell_prior":"npmle"}` →
   tuning 56.037 (+0.98), audit 56.377 (+1.58), full validation 56.191 (+1.26). Supersedes the lag candidate.
+- UPDATE 2 (short history): size lag coupled to the win gate + tied two-state hypotheses. Candidate
+  `{"sizes":"gate","gate_cell_prior":"npmle","gate_couple":true,"gate_couple_iters":20,"gate_tied":true}` →
+  tuning 56.999, audit 56.974, full validation 56.985 (+2.06 vs entry). Ship with:
+  python tools/make_entry.py --method method2_sizes --kwargs '<that JSON>' --data data/main --out build/main

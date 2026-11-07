@@ -6,6 +6,7 @@ Interface:  SizeModel.fit(train_queries, train_seq) -> self ;  SizeModel.predict
 import math
 from collections import defaultdict
 from common.data import SIZES
+from method1_gate.gate import structures, machine_tables, learn_structure_prior, logsumexp as _logsumexp
 
 
 def size_counts(seq_m):
@@ -86,7 +87,13 @@ class GateSizes:
     `half_life` optionally down-weights old wins (applies to counts in every hypothesis).
     """
     def __init__(self, max_lag=8, strength=4.0, p_none=0.3, learn_prior=True, prior_floor=0.02, half_life=None,
-                 cell_prior="beta", grid=49, npmle_iters=200, split_conc_cap=1e6):
+                 cell_prior="beta", grid=49, npmle_iters=200, split_conc_cap=1e6,
+                 couple=False, couple_alpha=5.0, couple_mix=0.1, couple_iters=1, win_cfg=None, tied=False, tie_weight=0.7, part_floor=0.02):
+        self.tied, self.tie_weight, self.part_floor = tied, tie_weight, part_floor
+        self.levels = None; self.part_prior = None
+        self.couple, self.couple_alpha, self.couple_mix = couple, couple_alpha, couple_mix
+        self.couple_iters = couple_iters
+        self.win_cfg = win_cfg or dict(a=.5, b=.5, p_change=.5, step=2, tau_min=40)
         self.max_lag, self.strength, self.p_none = max_lag, strength, p_none
         self.learn_prior, self.prior_floor, self.half_life = learn_prior, prior_floor, half_life
         self.cell_prior, self.grid, self.npmle_iters = cell_prior, grid, npmle_iters
@@ -122,12 +129,53 @@ class GateSizes:
             out.append((c, self._cat(seq_m[cut - k]) if cut - k >= 0 else 3))
         return out
 
+    # Tied ("two-state") hypotheses. Main-round train: the categories (loss, 1x, big) at the gate lag split into
+    # two groups that sit at the type's two learned levels (big vs not-big for nearly every machine). All three
+    # two-group splits are allowed; their prior is learned in fit(). Missing lag -> state unknown (mixture).
+    PARTITIONS = ((2,), (1,), (0,))   # group B = {big}, {1x}, {loss}; group A = the other two categories
+
+    def _tied(self, cells, cur, t, k_is_none=False):
+        """Combined (log marginal likelihood, predicted a) over tied hypotheses for one lag."""
+        lo, hi = self.levels[t]; lvl = (lo, hi)
+        def ll_cell(c0, c1, a):
+            return c1 * math.log(a) + c0 * math.log(1 - a)
+        def ll_mix(c0, c1):   # wins whose lag was missing: state unknown, each win a 50/50 mixture
+            p1 = (lo + hi) / 2
+            return c1 * math.log(p1) + c0 * math.log(1 - p1)
+        out = []
+        if k_is_none:   # constant state, lo or hi
+            c0, c1 = cells[0]
+            for s in (0, 1):
+                out.append((math.log(.5) + ll_cell(c0, c1, lvl[s]), lvl[s]))
+        else:
+            for pi, grp in enumerate(self.PARTITIONS):
+                lp = math.log(self.part_prior[pi]) + math.log(.5)
+                for d in (0, 1):   # d = state of group B
+                    ll = lp
+                    for ci in range(3):
+                        c0, c1 = cells[ci]
+                        ll += ll_cell(c0, c1, lvl[d if ci in grp else 1 - d])
+                    ll += ll_mix(*cells[3])
+                    a = (lo + hi) / 2 if cur == 3 else lvl[d if cur in grp else 1 - d]
+                    out.append((ll, a))
+        m = max(x for x, _ in out); w = [math.exp(x - m) for x, _ in out]; z = sum(w)
+        return m + math.log(z), sum(wi * a for wi, (_, a) in zip(w, out)) / z
+
     def _tables(self, seq_m, mu, t=None):
-        """Per hypothesis: (log marginal likelihood, predicted a at the cutoff)."""
+        """Per hypothesis (no gate, lag 1..max_lag): (log marginal likelihood, predicted a at the cutoff).
+        With tying on, each lag mixes its free-cell model with its tied two-state model (weight tie_weight)."""
         res = []
-        for cells, cur in self._cells(seq_m):
+        tie = self.tied and self.levels is not None and t in self.levels
+        for k, (cells, cur) in enumerate(self._cells(seq_m)):
             parts = [self._cell(c0, c1, t, mu) for c0, c1 in cells]
-            res.append((sum(p[0] for p in parts), parts[cur][1]))
+            free = (sum(p[0] for p in parts), parts[cur][1])
+            if not tie:
+                res.append(free); continue
+            tl = self._tied(cells, cur, t, k_is_none=(k == 0))
+            w = self.tie_weight
+            l1 = math.log(1 - w) + free[0]; l2 = math.log(w) + tl[0]; m = max(l1, l2)
+            e1, e2 = math.exp(l1 - m), math.exp(l2 - m)
+            res.append((m + math.log(e1 + e2), (e1 * free[1] + e2 * tl[1]) / (e1 + e2)))
         return res
 
     def _fit_atoms(self, queries, seq):
@@ -189,9 +237,11 @@ class GateSizes:
                 A = min(self.split_conc_cap, A * num / den) if den > 0 else self.split_conc_cap
             self.split_conc[t] = A
         self.mu = {t: (c[1] + 1) / (sum(c) + 2) for t, c in ones.items()}
-        self.atoms = None
+        self.atoms = None; self.levels = None
         if self.cell_prior == "npmle":
             self._fit_atoms(queries, seq)
+        if self.tied and self.atoms is not None:
+            self._fit_levels_and_partitions(queries, seq)
         L = self.max_lag
         prior = [self.p_none] + [(1 - self.p_none) / L] * L
         if self.learn_prior:   # how often each hypothesis is the most likely one on train machines
@@ -204,11 +254,99 @@ class GateSizes:
             tot = sum(score); prior = [max(self.prior_floor, x / tot) for x in score]
             s = sum(prior); prior = [x / s for x in prior]
         self.prior = prior
+        if self.couple:
+            self._fit_coupling(queries, seq)
         return self
+
+    def _fit_levels_and_partitions(self, queries, seq):
+        """Two levels per type = weighted means of the learned NPMLE atoms below / above the type mean.
+        Partition prior = average posterior over the 3 two-group splits, on each train machine's best free lag."""
+        self.levels = {}
+        for t, (A, _, _, w) in self.atoms.items():
+            mu = self.mu[t]
+            lo = [(a, x) for a, x in zip(A, w) if a < mu]; hi = [(a, x) for a, x in zip(A, w) if a >= mu]
+            if not lo or not hi or sum(x for _, x in lo) < .05 or sum(x for _, x in hi) < .05:
+                continue   # not two-state for this type: tied hypotheses switched off for it
+            self.levels[t] = (sum(a * x for a, x in lo) / sum(x for _, x in lo),
+                              sum(a * x for a, x in hi) / sum(x for _, x in hi))
+        self.part_prior = [1 / len(self.PARTITIONS)] * len(self.PARTITIONS)
+        acc = [0.0] * len(self.PARTITIONS)
+        for r in queries:
+            s = seq[r["machine_id"]]; t = r["machine_type"]
+            if t not in self.levels:
+                continue
+            hyp = self._cells(s); lv = self.levels
+            free = [sum(self._cell(c0, c1, t, self.mu[t])[0] for c0, c1 in cells) for cells, _ in hyp]
+            k = max(range(1, len(hyp)), key=free.__getitem__)
+            cells, cur = hyp[k]; lo, hi = lv[t]
+            lls = []
+            for grp in self.PARTITIONS:
+                best = []
+                for d in (0, 1):
+                    best.append(sum(cells[ci][1] * math.log((lo, hi)[d if ci in grp else 1 - d]) +
+                                    cells[ci][0] * math.log(1 - (lo, hi)[d if ci in grp else 1 - d]) for ci in range(3)))
+                m = max(best); lls.append(m + math.log(sum(math.exp(b - m) for b in best)))
+            m = max(lls); e = [math.exp(x - m) for x in lls]; z = sum(e)
+            for i, x in enumerate(e):
+                acc[i] += x / z
+        z = sum(acc)
+        if z > 0:
+            p = [max(self.part_floor, x / z) for x in acc]; z = sum(p); self.part_prior = [x / z for x in p]
+
+    # ---- Coupling to the win gate (short-history fix; FINDINGS.md "size lag follows the win gate") ----
+    # The size-gate lag is tied to the machine's win-gate structure (main round: win pair (a, b) -> size lag a).
+    # Wins identify the win gate from every observed tick, so P(win structure | history) is a much sharper
+    # prior for the size lag than the global one. The table P(size lag | win structure) is learned in fit().
+    def _win_posterior(self, seq_m):
+        """Posterior over win-gate structures (method 1's family + 'no gate'), flips marginalized like method 1."""
+        cut = len(seq_m); cfg = self.win_cfg
+        taus = list(range(cfg["tau_min"], cut - 2, cfg["step"]))
+        lt = [math.log(cfg["p_change"] / len(taus))] * len(taus) + [math.log(1 - cfg["p_change"])] if taus \
+            else [0.0]
+        tb = machine_tables(seq_m, cut, taus, self.wST, cfg["a"], cfg["b"])
+        ls = []
+        for si, rows in enumerate(tb):
+            ls.append(math.log(self.wprior[si]) + _logsumexp([ll + p for (ll, _), p in zip(rows, lt)]))
+        m = max(ls); e = [math.exp(x - m) for x in ls]; z = sum(e)
+        return [x / z for x in e]
+
+    def _size_posterior(self, tabs, prior):
+        lw = [math.log(max(p, 1e-300)) + ll for p, (ll, _) in zip(prior, tabs)]; m = max(lw)
+        w = [math.exp(x - m) for x in lw]; s = sum(w)
+        return [x / s for x in w]
+
+    def _fit_coupling(self, queries, seq):
+        self.wST = structures(self.max_lag, 2)
+        self.wprior = learn_structure_prior(queries, seq, self.wST, self.win_cfg["a"], self.win_cfg["b"])
+        K = self.max_lag + 1; S = len(self.wST) + 1; a = self.couple_alpha
+        data = []
+        for r in queries:
+            s = seq[r["machine_id"]]; t = r["machine_type"]
+            wp = self._win_posterior(s); ll = [x[0] for x in self._tables(s, self.mu[t], t)]
+            m = max(ll); L = [math.exp(x - m) for x in ll]
+            data.append(([(i, x) for i, x in enumerate(wp) if x > 1e-4], L))
+        self.cond = [self.prior[:] for _ in range(S)]
+        # EM over the joint latent (win structure i, size lag k): P(i, k | data) ∝ wp_i * cond[i][k] * L_k
+        for _ in range(self.couple_iters):
+            C = [[0.0] * K for _ in range(S)]
+            for wp, L in data:
+                joint = [(i, k, x * self.cond[i][k] * L[k]) for i, x in wp for k in range(K)]
+                z = sum(v for _, _, v in joint)
+                for i, k, v in joint:
+                    C[i][k] += v / z
+            self.cond = [[(C[i][k] + a * self.prior[k]) / (sum(C[i]) + a) for k in range(K)] for i in range(S)]
+
+    def size_prior(self, seq_m):
+        if not self.couple:
+            return self.prior
+        wp = self._win_posterior(seq_m); K = self.max_lag + 1
+        p = [sum(wp[i] * self.cond[i][k] for i in range(len(wp))) for k in range(K)]
+        m = self.couple_mix   # keep some global prior so a wrong coupling can't zero out a hypothesis
+        return [(1 - m) * x + m * y for x, y in zip(p, self.prior)]
 
     def predict(self, q, seq_m):
         t = q["machine_type"]; tabs = self._tables(seq_m, self.mu[t], t)
-        lw = [math.log(p) + ll for p, (ll, _) in zip(self.prior, tabs)]; m = max(lw)
+        lw = [math.log(p) + ll for p, (ll, _) in zip(self.size_prior(seq_m), tabs)]; m = max(lw)
         w = [math.exp(x - m) for x in lw]; s = sum(w)
         a = sum(wi * pa for wi, (_, pa) in zip(w, tabs)) / s
         A = self.split_conc[t]; c = [sum(1 for v in seq_m if v == x) for x in (2, 5, 20)]

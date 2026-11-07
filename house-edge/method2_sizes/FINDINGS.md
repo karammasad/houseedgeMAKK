@@ -1,5 +1,41 @@
 # Method 2 findings: payout sizes given a win
 
+## ★★ Update 2: short-history fix (supersedes the size-gate candidate below)
+
+**Candidate:** `{"sizes":"gate","gate_cell_prior":"npmle","gate_couple":true,"gate_couple_iters":20,"gate_tied":true}`
+
+| | tuning | audit | full validation (kit) | short ratio (full val) |
+| --- | --- | --- | --- | --- |
+| current entry (NPMLE sizes) | 55.054 | 54.795 | 54.927 | .132 |
+| size gate (update 1) | 56.037 | 56.377 | 56.191 | .125 |
+| **+ coupling + tied** | **56.999** | **56.974** | **56.985 (+2.06)** | **.107** |
+
+Full-validation loss ratios: stable .034, short .107, drift .039, shared .032. Runtime ≈ 52 s for fit + validation +
+test. Deterministic.
+
+Short history had the largest size headroom (true sizes: .125 → .071). The cause was data: only about 15 wins fall
+in the 40-tick window, where the gate lag is observable. Two findings let short machines borrow strength:
+
+1. **The size-gate lag is tied to the machine's own win gate** (`share_probe.py`, confident train machines):
+   win pair (1,3) → size lag 1 (24/24), (2,5) → 2 (38/38), (4,7) → 4 (38/38). It is NOT shared within an
+   episode (same lag 0.29 vs chance 0.33), and its direction is not tied to win polarity, signal or type.
+   The win gate is identified from every tick with a ±0.8 effect, so it pins the size lag.
+   → `gate_couple`: size-lag prior = Σ_s P(win structure s | history) · P(size lag | s). The table is learned
+   by EM on train over the joint latent (s, lag). It learns 0.93–0.94 on the matching lag. Flips are marginalized
+   as in method 1 (adi's C0 lesson: structure ID must be flip-aware). `couple_mix` = 0.1 keeps some global
+   prior (0.02 vs 0.1 differs by 0.03 → kept 0.1 for safety). Tuning +0.63.
+2. **The gate is two-state**: at the gate lag, "after a loss" and "after a 1×" share a state and "after a big win"
+   is the opposite (87 of about 120 confident machines; the rest are uncertain).
+   → `gate_tied`: per lag, mix free cells with tied hypotheses: one of 3 two-group splits × direction, groups at
+   the type's two learned levels (from the NPMLE atoms). The split prior is learned (big-vs-rest .58, 1× .17,
+   loss .25). Free cells remain, so a round-2 mechanism that isn't two-state falls back automatically.
+   tie_weight is flat over .5–.9 (56.94–57.05); kept .7. Tuning +0.33; short .113 → .100.
+
+Rejected / nothing to borrow: episode sharing of lag or direction, direction from win polarity / signal / type.
+
+**Remaining short-history headroom is mostly on the WIN side now:** with true win probability, short drops to .054.
+That belongs to method 1 (A6 asymmetric learned cell priors, C5 stronger priors for 64-tick logs).
+
 ## ★ Update: the size gate (supersedes the "Recommendation" at the bottom)
 
 **Where the points were going** (`python -m method2_sizes.diagnose`, validation tuning half):
