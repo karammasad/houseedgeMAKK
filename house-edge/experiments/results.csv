@@ -37,3 +37,16 @@ time,user,method,kwargs,note,tuning,audit,tune_stable,tune_short_history,tune_dr
 2026-11-07 12:28,adinounou,method1_gate,{},adi: method1 audit for comparison,55.0537,54.7949,0.07380,0.13134,0.08966,0.06459,9.4
 2026-11-07 12:29,adinounou,adi,"{""max_lag"": 12, ""and_pairs"": true, ""prior_flips"": true, ""prune"": 0.02, ""floor"": 0.1}",adi C3 prune/floor on widest family,55.1038,,0.07379,0.12746,0.08957,0.06459,31.1
 2026-11-07 12:31,adinounou,adi,"{""max_lag"": 12, ""and_pairs"": true, ""prior_flips"": true, ""prune"": 0.01, ""floor"": 0.05}","adi final candidate, re-run after method2 update",55.1039,54.8638,0.07379,0.12745,0.08957,0.06459,30.0
+2026-11-07 12:36,mominhassan,method2_sizes,"{""sizes"":""gate"",""gate_learn_prior"":false}",size gate v1,55.6574,,0.05790,0.13976,0.07065,0.04379,10.1
+2026-11-07 12:36,mominhassan,method2_sizes,"{""sizes"":""gate""}",size gate v1,55.7981,,0.05643,0.13508,0.06878,0.04093,10.2
+2026-11-07 12:36,mominhassan,method2_sizes,"{""sizes"":""gate"",""gate_strength"":10}",size gate v1,55.9473,,0.05699,0.12325,0.06785,0.04166,10.2
+2026-11-07 12:36,mominhassan,method2_sizes,"{""sizes"":""gate"",""gate_strength"":2}",size gate v1,55.5602,,0.05676,0.15157,0.06997,0.04133,10.2
+2026-11-07 12:37,mominhassan,method2_sizes,"{""sizes"":""gate"",""gate_strength"":40}",size gate sweep,55.6609,,0.06529,0.12288,0.07436,0.04930,9.9
+2026-11-07 12:37,mominhassan,method2_sizes,"{""sizes"":""gate"",""gate_strength"":20}",size gate sweep,55.8837,,0.05945,0.12181,0.06926,0.04412,9.9
+2026-11-07 12:37,mominhassan,method2_sizes,"{""sizes"":""gate"",""gate_strength"":10,""gate_max_lag"":4}",size gate sweep,56.0037,,0.05660,0.12145,0.06763,0.03976,10.0
+2026-11-07 12:37,mominhassan,method2_sizes,"{""sizes"":""gate"",""gate_strength"":10,""gate_half_life"":128}",size gate sweep,55.7589,,0.06150,0.12264,0.07186,0.04825,10.0
+2026-11-07 12:38,mominhassan,method2_sizes,"{""sizes"":""gate"",""gate_cell_prior"":""npmle"",""gate_strength"":10}",size gate npmle cell prior,56.0879,,0.05262,0.12458,0.06479,0.03700,11.8
+2026-11-07 12:38,mominhassan,method2_sizes,"{""sizes"":""gate"",""gate_cell_prior"":""npmle""}",size gate npmle cell prior,56.0864,,0.05262,0.12439,0.06485,0.03724,12.0
+2026-11-07 12:38,mominhassan,method2_sizes,"{""sizes"":""gate"",""gate_cell_prior"":""npmle""}",size gate npmle + self-checking big split,56.0375,,0.05386,0.12486,0.06549,0.03864,11.9
+2026-11-07 12:39,mominhassan,method2_sizes,"{""sizes"":""gate"",""gate_cell_prior"":""npmle""}",size gate final candidate (audit),56.0375,56.3774,0.05386,0.12486,0.06549,0.03864,11.8
+2026-11-07 12:39,mominhassan,method2_sizes,"{""sizes"":""gate"",""gate_cell_prior"":""npmle""}",size gate candidate test CSV,56.0375,,0.05386,0.12486,0.06549,0.03864,11.9

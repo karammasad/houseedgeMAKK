@@ -28,3 +28,5 @@ To measure size changes alone, keep the gate fixed (same Model settings) and cha
   B6 (`sizes="minka"`: worse). B2 skipped (episode ICC ≈ 0). B3 blocked (needs the gate's flip posterior from Person A).
 - Candidate: `{"sizes":"lag","lag_strength":100,"npmle_half_life":64}` → tuning 55.227 (+0.173), audit 54.851 (+0.056),
   full validation via kit checker 55.044 (+0.117). Details in FINDINGS.md; outputs in out/.
+- UPDATE: size gate found (see top of FINDINGS.md). New candidate `{"sizes":"gate","gate_cell_prior":"npmle"}` →
+  tuning 56.037 (+0.98), audit 56.377 (+1.58), full validation 56.191 (+1.26). Supersedes the lag candidate.

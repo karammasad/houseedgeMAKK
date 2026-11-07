@@ -1,5 +1,57 @@
 # Method 2 findings: payout sizes given a win
 
+## ★ Update: the size gate (supersedes the "Recommendation" at the bottom)
+
+**Where the points were going** (`python -m method2_sizes.diagnose`, validation tuning half):
+
+| swap in the truth for… | points |
+| --- | --- |
+| nothing (lag + hl64 candidate) | 55.23 |
+| sizes only | 57.56 (+2.3) |
+| win probability only | 57.43 (+2.2) |
+
+Sizes cost as many points as the win gate does. The old model's sizes correlated only 0.4–0.57 with the truth.
+
+**Structure of the true sizes** (validation targets, diagnosis only):
+1. Given a big win, the 2×/5×/20× split is **exactly constant per type** (sd 0.0000): balanced .696/.261/.043,
+   jackpot .368/.474/.158, steady .800/.196/.004. Fault in the old model: it estimated this per machine (noise).
+2. P(1×|win) takes **exactly two values per type**: balanced .214/.500, jackpot .121/.335, steady .455/.754.
+   It's a binary hidden "size gate", like the win gate.
+3. Train histories (`state_search.py`): the gate follows the **payout category (loss/1×/big) at one earlier lag**:
+   lags 1, 2, 4 dominate (excess G ≈ 1200 each vs ≈ 500 for any pair). Lag and direction are per machine; pooled
+   tables are flat. Example machine: P(1×|win) = .30 after a 1× at lag 1, .89 after a big win.
+
+**Model: `GateSizes`** (`sizes="gate"`, `gate_cell_prior="npmle"`):
+- a = P(1×|win) by Bayesian model averaging over "gate at lag k" (k = 1..8, cells loss/1×/big/missing) and "no gate".
+- Prior over a per cell = NPMLE on a grid, learned from train. It **found the two levels unaided**
+  (steady ≈ .45/.75, balanced ≈ .20/.52, jackpot ≈ .10/.34).
+- Hypothesis prior learned from train. It **picked lags 1, 2, 4 unaided** (.19/.18/.17 vs ≈ .08 for the others).
+- Big-win split pooled per type, with a self-check: Minka concentration learned from train
+  (≈ 60–77 here; it drops to ≈ 9 on a simulated per-machine split, so it falls back to per-machine counts automatically).
+
+**Results** (current entry = NPMLE: tuning 55.054, audit 54.795, full validation 54.927):
+
+| setting | tuning | audit | full validation (kit checker) |
+| --- | --- | --- | --- |
+| gate, Beta cells, strength 4 | 55.798 | | |
+| gate, Beta cells, strength 10 | 55.947 | | |
+| gate, Beta cells, strength 10, max lag 4 | 56.004 | | (round-1 specific, not used) |
+| gate, NPMLE cells, pooled split | 56.088 | | |
+| **gate, NPMLE cells, self-checking split** | **56.037 (+0.98)** | **56.377 (+1.58)** | **56.191 (+1.26)** |
+
+Per-condition loss ratios (full validation): stable .074→.045, drift .086→.051, shared .077→.050, short .132→.125.
+Runtime: fit + validation + test ≈ 25 s. Deterministic (byte-identical rerun).
+
+**Why this should carry to round 2:** nothing round-specific is hard-coded. The lags searched (1..8), the state
+levels, the lag prior and the big-win split all come from `fit()` on that round's train histories. The settings are
+insensitive (strength 4 vs 10 makes no difference with NPMLE cells). The only round-1-specific option
+(max lag 4) was rejected.
+
+**Still weak:** short history (ratio .125). With about 30 wins, the gate lag can't be identified per machine.
+
+---
+
+
 All diagnostics use **train histories only** (`python -m method2_sizes.analysis --data data/main`,
 `python3 method2_sizes/feature_search.py`). Scores use `common.evaluate` (kit tuning/audit halves)
 with the gate held fixed, so differences come from the size model alone.

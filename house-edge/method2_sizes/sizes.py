@@ -67,6 +67,155 @@ class MinkaSizes:
         return [(x + y) / s for x, y in zip(c, a)]
 
 
+def _lbeta(a, b):
+    return math.lgamma(a) + math.lgamma(b) - math.lgamma(a + b)
+
+
+class GateSizes:
+    """Size model built on two structural facts found in main-round data (FINDINGS.md, "size gate"):
+      1. Given a big win (>= 2x), the split among 2x/5x/20x is a fixed constant per machine type.
+         -> learned in fit() as the pooled type-level split from train histories.
+      2. Only a = P(1x | win) moves, and it follows a per-machine binary "size gate" that depends on what
+         happened at one earlier lag (loss / 1x / big), with machine-specific lag and direction.
+         -> Bayesian model averaging over hypotheses H_k: "a depends on the payout category at lag k",
+            k in 1..max_lag, plus H_0: "a is constant". Each hypothesis gives every category cell its own
+            Beta prior centred on the type mean (strength `strength`); cells include "missing" so every
+            hypothesis scores the same wins. Weights = prior x Beta-binomial marginal likelihood.
+    Nothing about which lag matters is hard-coded; hypothesis prior weights are learned from train
+    (how often each lag wins on train machines), floored so a new round can pick different lags.
+    `half_life` optionally down-weights old wins (applies to counts in every hypothesis).
+    """
+    def __init__(self, max_lag=8, strength=4.0, p_none=0.3, learn_prior=True, prior_floor=0.02, half_life=None,
+                 cell_prior="beta", grid=49, npmle_iters=200, split_conc_cap=1e6):
+        self.max_lag, self.strength, self.p_none = max_lag, strength, p_none
+        self.learn_prior, self.prior_floor, self.half_life = learn_prior, prior_floor, half_life
+        self.cell_prior, self.grid, self.npmle_iters = cell_prior, grid, npmle_iters
+        self.split_conc_cap = split_conc_cap
+        self.atoms = None   # {type: (grid a values, log a, log(1-a), weights)} when cell_prior == "npmle"
+
+    @staticmethod
+    def _cat(v):
+        return 3 if v < 0 else (0 if v == 0 else 1 if v == 1 else 2)   # loss, 1x, big, missing
+
+    def _cell(self, n0, n1, t, mu):
+        """(log marginal likelihood, posterior mean of a) for one cell with n1 1x-wins and n0 big wins."""
+        if self.atoms is None or t not in self.atoms:
+            a0, b0 = self.strength * mu, self.strength * (1 - mu)
+            return _lbeta(a0 + n1, b0 + n0) - _lbeta(a0, b0), (a0 + n1) / (a0 + b0 + n0 + n1)
+        A, la, lb, w = self.atoms[t]
+        l = [n1 * x + n0 * y + math.log(wi) if wi > 0 else -1e300 for x, y, wi in zip(la, lb, w)]
+        m = max(l); e = [math.exp(x - m) for x in l]; s = sum(e)
+        return m + math.log(s), sum(ei * ai for ei, ai in zip(e, A)) / s
+
+    def _cells(self, seq_m):
+        """Per hypothesis: list of 4 cells [n0, n1] (index 0 = constant hypothesis, one pooled cell) and the
+        index of the cell the cutoff falls in."""
+        cut = len(seq_m); L = self.max_lag
+        wins = [(t, int(seq_m[t] == 1)) for t in range(cut) if seq_m[t] > 0]
+        wt = [1.0 if self.half_life is None else 2.0 ** (-(cut - 1 - t) / self.half_life) for t, _ in wins]
+        n1 = sum(w * y for (t, y), w in zip(wins, wt)); n = sum(wt)
+        out = [([[n - n1, n1]], 0)]
+        for k in range(1, L + 1):
+            c = [[0.0, 0.0] for _ in range(4)]
+            for (t, y), w in zip(wins, wt):
+                c[self._cat(seq_m[t - k]) if t - k >= 0 else 3][y] += w
+            out.append((c, self._cat(seq_m[cut - k]) if cut - k >= 0 else 3))
+        return out
+
+    def _tables(self, seq_m, mu, t=None):
+        """Per hypothesis: (log marginal likelihood, predicted a at the cutoff)."""
+        res = []
+        for cells, cur in self._cells(seq_m):
+            parts = [self._cell(c0, c1, t, mu) for c0, c1 in cells]
+            res.append((sum(p[0] for p in parts), parts[cur][1]))
+        return res
+
+    def _fit_atoms(self, queries, seq):
+        """NPMLE (Kiefer-Wolfowitz, EM on a fixed grid) of the distribution of a per machine type, using the
+        cells of each train machine's most likely gate hypothesis (from the Beta pass). Learns the state
+        levels from data instead of hard-coding them."""
+        G = [(i + 1) / (self.grid + 1) for i in range(self.grid)]
+        la = [math.log(g) for g in G]; lb = [math.log(1 - g) for g in G]
+        cells = defaultdict(list)
+        for r in queries:
+            s = seq[r["machine_id"]]; t = r["machine_type"]
+            tabs = self._tables(s, self.mu[t]); hyp = self._cells(s)
+            best = max(range(len(tabs)), key=lambda i: tabs[i][0])
+            for c0, c1 in hyp[best][0]:
+                if c0 + c1 >= 5:
+                    cells[t].append((c0, c1))
+        self.atoms = {}
+        for t, cs in cells.items():
+            E = []
+            for c0, c1 in cs:
+                row = [c1 * x + c0 * y for x, y in zip(la, lb)]; m = max(row)
+                E.append([math.exp(v - m) for v in row])
+            w = [1 / len(G)] * len(G)
+            for _ in range(self.npmle_iters):
+                acc = [0.0] * len(G)
+                for e in E:
+                    pe = [x * y for x, y in zip(e, w)]; s = sum(pe)
+                    for j, v in enumerate(pe):
+                        acc[j] += v / s
+                w = [x / len(E) for x in acc]
+            self.atoms[t] = (G, la, lb, w)
+
+    def fit(self, queries, seq):
+        big = defaultdict(lambda: [0, 0, 0]); ones = defaultdict(lambda: [0, 0])
+        for r in queries:
+            for v in seq[r["machine_id"]]:
+                if v > 0:
+                    ones[r["machine_type"]][int(v == 1)] += 1
+                if v > 1:
+                    big[r["machine_type"]][SIZES.index(v) - 1] += 1
+        self.split = {t: [(x + .5) / (sum(c) + 1.5) for x in c] for t, c in big.items()}
+        # Self-check of "big-win split is fixed per type": fit a Dirichlet-multinomial concentration per type
+        # (Minka fixed point, mean held at the pooled split) on train machines' big-win counts. If the split
+        # really is constant the concentration runs to the cap and predictions pool; if a new round makes it
+        # vary by machine, the concentration drops and each machine's own counts take over.
+        self.split_conc = {}
+        for t, mean in self.split.items():
+            cs = []
+            for r in queries:
+                if r["machine_type"] == t:
+                    s = seq[r["machine_id"]]
+                    c = [sum(1 for v in s if v == x) for x in (2, 5, 20)]
+                    if sum(c) > 0:
+                        cs.append(c)
+            A = 10.0
+            for _ in range(200):
+                num = sum(m * (_digamma(c[i] + A * m) - _digamma(A * m)) for c in cs for i, m in enumerate(mean))
+                den = sum(_digamma(sum(c) + A) - _digamma(A) for c in cs)
+                A = min(self.split_conc_cap, A * num / den) if den > 0 else self.split_conc_cap
+            self.split_conc[t] = A
+        self.mu = {t: (c[1] + 1) / (sum(c) + 2) for t, c in ones.items()}
+        self.atoms = None
+        if self.cell_prior == "npmle":
+            self._fit_atoms(queries, seq)
+        L = self.max_lag
+        prior = [self.p_none] + [(1 - self.p_none) / L] * L
+        if self.learn_prior:   # how often each hypothesis is the most likely one on train machines
+            score = [0.0] * (L + 1)
+            for r in queries:
+                tabs = self._tables(seq[r["machine_id"]], self.mu[r["machine_type"]], r["machine_type"])
+                lls = [x[0] for x in tabs]; m = max(lls); e = [math.exp(x - m) for x in lls]; s = sum(e)
+                for i, x in enumerate(e):
+                    score[i] += x / s
+            tot = sum(score); prior = [max(self.prior_floor, x / tot) for x in score]
+            s = sum(prior); prior = [x / s for x in prior]
+        self.prior = prior
+        return self
+
+    def predict(self, q, seq_m):
+        t = q["machine_type"]; tabs = self._tables(seq_m, self.mu[t], t)
+        lw = [math.log(p) + ll for p, (ll, _) in zip(self.prior, tabs)]; m = max(lw)
+        w = [math.exp(x - m) for x in lw]; s = sum(w)
+        a = sum(wi * pa for wi, (_, pa) in zip(w, tabs)) / s
+        A = self.split_conc[t]; c = [sum(1 for v in seq_m if v == x) for x in (2, 5, 20)]
+        sp = [(ci + A * m) / (sum(c) + A) for ci, m in zip(c, self.split[t])]
+        return [a] + [(1 - a) * x for x in sp]
+
+
 class LagSizes:
     """Size given a win, conditioned on whether earlier spins won (B1 finding: per-machine, direction varies).
 
