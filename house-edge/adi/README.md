@@ -10,7 +10,10 @@ python -m common.evaluate --method adi --data data/main --kwargs '{"max_lag": 12
 Standard library only. Settings are described in `model.py`. With default settings it is identical to
 `method1_gate` (tuning 55.054).
 
-**Best known (round 4):** method2_sizes `round2.FINAL` with `"size_split": true` added to its adi win_kwargs:
+**Best known (round 5):** FINAL + `"cell_signal": true` in the adi win_kwargs: tuning 58.156 / audit 57.986 /
+full 58.074 (keep-check KEEP vs the uploaded size-split FINAL). See FINDINGS "Round 5".
+
+**Previous (round 4, now in FINAL):** method2_sizes `round2.FINAL` with `"size_split": true` added to its adi win_kwargs:
 tuning 58.080 / audit 57.832 / full 57.960 on top of the joint-EM FINAL (57.901 / 57.665 / 57.787), keep-check
 KEEP. See FINDINGS "Round 4".
 

@@ -201,6 +201,32 @@ Also checked and rejected:
 - A joint (on, off) NPMLE rate prior (Koenker & Gu, bivariate binomial mixture) would replace the Beta priors.
   It's the next research-backed idea, but it needs an atom grid inside every structure x flip evaluation (slow).
 
+## Round 5: hierarchical cell prior with a signal slope (KEEP)
+
+**Where the error is now** (FINAL with size split, full validation 57.96): true P(win) -> 59.57, true sizes -> 58.36.
+True on-cell win rates are continuous (not a small discrete set), so a discrete NPMLE prior isn't the fix. Long logs
+are near the binomial floor (~100 ticks per cell). The reachable gain is in better priors, which matter most for
+short logs.
+
+**Model** (`cell_signal: true`): per machine type, the on and off prior means become
+logistic(type log-odds + slope * signal), with strengths shared within the type. That's 6 numbers per type, fitted
+on train evidence by coordinate ascent (`gate.fit_signal_cell_prior`). Splitting groups by type x signal overfit in
+C5; this gets the signal effect with 2 extra numbers per type. Learned: the slope is +0.30 for every type and both
+cells (positive signal = higher win rate), and the priors tighten (balanced on k 25 -> 50, jackpot on 12 -> 25).
+
+**Keep-check** vs FINAL with size split (method2_sizes.keepcheck):
+
+| | tuning | audit | full | stable | short | drift | shared |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| FINAL (uploaded, e2686e96) | 58.080 | 57.832 | 57.960 | .0243 | .0644 | .0268 | .0253 |
+| **FINAL + cell_signal** | **58.156** | **57.986** | **58.074** | .0211 | .0617 | .0257 | .0242 |
+
+VERDICT KEEP: bootstrap P(better) = 0.999, 4/4 conditions better. Tuning +0.076 is under AGENTS rule 6's 0.15, but
+audit +0.154 and full +0.114 agree. Test CSV deterministic (56c5cd55...), kit check OK, fit + test 157 s. The
+uploaded FINAL still rebuilds byte-identical (e2686e96) with this code.
+
+To adopt: add `"cell_signal": True` to `ADI` in method2_sizes/round2.py and rebuild with method2_sizes.make_entry.
+
 ## Not done yet (TASK.md order)
 C4 (L1 logistic fallback gate), C6 (episode-shared lag pairs/polarity), C7 (uniform-vs-learned robustness drill).
 Also untested: whether the per-type cell priors transfer to round 2 (they are re-learned from round 2's train

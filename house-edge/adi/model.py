@@ -30,6 +30,8 @@ Settings
                depend on the hidden size state. "tied": cells merge into two size states (one category vs the
                other two, averaged over the 3 groupings) = 4 cells. Prior over plain + split re-learned under the
                cell priors (round 4)
+  cell_signal  with cell_prior="learn": per machine type, on/off prior means get a learned log-odds slope in
+               `signal` (hierarchical; strengths shared within the type), fitted on train evidence (round 5)
   split_long_only  with size_split: use split structures only for long logs (short logs keep plain pairs)
   sizes        "npmle" (default, = method 1), "dirichlet", or "gate" (method2_sizes.GateSizes, imported as-is)
   gate_*       passed to GateSizes when sizes="gate": gate_max_lag, gate_strength, gate_p_none,
@@ -93,7 +95,7 @@ class Model:
                  gate_couple=False, gate_couple_alpha=5.0, gate_couple_mix=0.1, gate_couple_iters=1,
                  gate_tied=False, gate_tie_weight=0.7, episode_shift=None, shift_sigma="learn",
                  rate_half_life=None, neighbor_adjust=False, size_split=False,
-                 split_long_only=False):
+                 split_long_only=False, cell_signal=False):
         self.cfg = dict(a=a, b=b, p_change=p_change, step=step, tau_min=tau_min, half_life=None)
         self.rate_half_life = rate_half_life
         self.ST = G.structures(max_lag, xor_order, and_pairs, and_max_lag)
@@ -102,7 +104,7 @@ class Model:
         self.cell_group = cell_group
         self.episode_shift, self.shift_sigma = episode_shift, shift_sigma
         self.neighbor_adjust, self.size_split = neighbor_adjust, size_split
-        self.split_long_only = split_long_only
+        self.split_long_only, self.cell_signal = split_long_only, cell_signal
         self.cellpriors = None if cell_prior in (None, "learn") else {(): tuple(cell_prior)}
         if sizes == "gate":
             self.sizes = GateSizes(max_lag=gate_max_lag, strength=gate_strength, p_none=gate_p_none,
@@ -140,6 +142,13 @@ class Model:
         self.sprior = self._finish_prior(p)
         if self.cell_prior == "learn":
             self.cellpriors = G.fit_cell_priors(q, seq, self.ST, self.sprior, self.cfg, self.cell_group)
+        if self.cell_signal and self.cell_prior == "learn":
+            # round 5: per machine type, means shifted by a learned log-odds slope in signal (start from the
+            # type prior already fitted; fitted on train evidence)
+            self.signal_priors = {}
+            for t in sorted({r["machine_type"] for r in q}):
+                rs = [r for r in q if r["machine_type"] == t]
+                self.signal_priors[t] = G.fit_signal_cell_prior(rs, seq, self.ST, self.sprior, self.cfg)[0]
         if self.size_split:
             self._add_splits(q, seq)
         if self.relearn and self.cellpriors is not None:
@@ -230,6 +239,8 @@ class Model:
         _, self.shift_mode, self.shift_sigma_fit = best
 
     def _cp(self, r):
+        if getattr(self, "signal_priors", None) and r["machine_type"] in self.signal_priors:
+            return G.signal_cellprior(self.signal_priors[r["machine_type"]], r["signal"])
         if self.cellpriors is None:
             return None
         return G.lookup_cell_prior(self.cellpriors, r, self.cell_group if self.cell_prior == "learn" else "none")

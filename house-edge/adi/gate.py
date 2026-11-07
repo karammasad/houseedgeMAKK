@@ -324,6 +324,43 @@ def fit_cell_prior(queries, seq, ST, sprior, cfg, step=4, rounds=2):
     return (mo * ko, (1 - mo) * ko, mf * kf, (1 - mf) * kf), cur
 
 
+SLOPES = (-.8, -.5, -.3, -.15, 0.0, .15, .3, .5, .8)
+
+
+def _logit(m):
+    m = min(max(m, 1e-6), 1 - 1e-6); return math.log(m / (1 - m))
+
+
+def signal_cellprior(x, sig):
+    """x = (mean_on, mean_off, k_on, k_off, slope_on, slope_off): means shifted on the log-odds scale by
+    slope * signal (signal in {-1, 0, 1}); strengths shared."""
+    mo, mf, ko, kf, so, sf = x
+    a = 1 / (1 + math.exp(-(_logit(mo) + so * sig))); b = 1 / (1 + math.exp(-(_logit(mf) + sf * sig)))
+    return (a * ko, (1 - a) * ko, b * kf, (1 - b) * kf)
+
+
+def fit_signal_cell_prior(queries, seq, ST, sprior, cfg, step=4, rounds=2, cfg_fn=None):
+    """Hierarchical cell prior per group with a log-odds slope in `signal` (round 5). Coordinate ascent of the
+    summed train log-evidence over (on mean, off mean, on strength, off strength, on slope, off slope).
+    cfg_fn(r) may return a per-machine cfg (e.g. short-log p_change)."""
+    def kw(r):
+        c = dict(cfg_fn(r) if cfg_fn else cfg); c["step"] = max(step, c.get("step", 2)); return c
+    def ev(x):
+        return sum(win_probability(r, seq[r["machine_id"]], ST, sprior, cellprior=signal_cellprior(x, r["signal"]),
+                                   evidence=True, **kw(r))[1] for r in queries)
+    x = [.85, .05, 12, 12, 0.0, 0.0]; cur = ev(x)
+    grids = (MEANS_ON, MEANS_OFF, STRENGTHS, STRENGTHS, SLOPES, SLOPES)
+    for _ in range(rounds):
+        for i, grid in enumerate(grids):
+            for v in grid:
+                if v == x[i]:
+                    continue
+                y = x[:]; y[i] = v; e = ev(y)
+                if e > cur:
+                    x, cur = y, e
+    return tuple(x), cur
+
+
 def fit_cell_priors(queries, seq, ST, sprior, cfg, group="type_signal", min_group=40):
     """Cell priors per group of train machines ("none" = one shared prior, "type", "type_signal").
     Groups smaller than min_group fall back to the machine type's prior, then to the shared one."""
