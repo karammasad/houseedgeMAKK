@@ -88,7 +88,9 @@ class GateSizes:
     """
     def __init__(self, max_lag=8, strength=4.0, p_none=0.3, learn_prior=True, prior_floor=0.02, half_life=None,
                  cell_prior="beta", grid=49, npmle_iters=200, split_conc_cap=1e6,
-                 couple=False, couple_alpha=5.0, couple_mix=0.1, couple_iters=1, win_cfg=None, tied=False, tie_weight=0.7, part_floor=0.02):
+                 couple=False, couple_alpha=5.0, couple_mix=0.1, couple_iters=1, win_cfg=None, tied=False, tie_weight=0.7, part_floor=0.02,
+                 joint_em=False, joint_iters=30):
+        self.joint_em, self.joint_iters, self.joint_trace = joint_em, joint_iters, []
         self.tied, self.tie_weight, self.part_floor = tied, tie_weight, part_floor
         self.tie_weight_setting = tie_weight   # "learn" -> fitted on train in fit()
         self.levels = None; self.part_prior = None
@@ -259,6 +261,8 @@ class GateSizes:
         self.prior = prior
         if self.couple:
             self._fit_coupling(queries, seq)
+        if self.joint_em:   # optional: refit (tie weight, partition prior, lag prior, coupling) jointly
+            self._fit_joint_em(queries, seq)
         return self
 
     def _fit_tie_weight(self, queries, seq, iters=20):
@@ -361,6 +365,104 @@ class GateSizes:
                 for i, k, v in joint:
                     C[i][k] += v / z
             self.cond = [[(C[i][k] + a * self.prior[k]) / (sum(C[i]) + a) for k in range(K)] for i in range(S)]
+
+    # ---- Optional joint empirical-Bayes EM (gate_joint_em=True; default off = current estimator) ----
+    # Model per machine m (sizes y_m given its win/loss sequence; win posterior wp_m fixed from method 1):
+    #   p(y_m) = sum_k pi_mk [ (1-w) F_mk + w sum_p rho_p T_mkp ],  pi_mk = (1-c) sum_i wp_mi C_ik + c g_k
+    # Joint EM over theta = (w, rho, g, C) with responsibilities over (source, lag k, shape, partition p),
+    # instead of fitting w and rho at each machine's best free lag. NPMLE atoms and levels stay as fitted.
+    def _tied_raw(self, cells, t, k_is_none):
+        """Tied log-likelihoods without priors: lag 0 -> scalar (lo/hi averaged); lag k -> list per partition,
+        each averaged over direction d (1/2 each), plus the missing-lag mixture cell."""
+        lo, hi = self.levels[t]; lvl = (lo, hi)
+        ll = lambda c0, c1, a: c1 * math.log(a) + c0 * math.log(1 - a)
+        if k_is_none:
+            c0, c1 = cells[0]
+            return _logsumexp([math.log(.5) + ll(c0, c1, a) for a in lvl])
+        mix = ll(*cells[3], (lo + hi) / 2)
+        out = []
+        for grp in self.PARTITIONS:
+            out.append(_logsumexp([math.log(.5) + sum(ll(*cells[ci], lvl[d if ci in grp else 1 - d]) for ci in range(3))
+                                   for d in (0, 1)]) + mix)
+        return out
+
+    def _fit_joint_em(self, queries, seq):
+        if not self.levels:
+            return
+        K = self.max_lag + 1; c = self.couple_mix if self.couple else 1.0; a = self.couple_alpha
+        S = len(self.cond) if self.couple else 0
+        data = []
+        for r in queries:
+            s = seq[r["machine_id"]]; t = r["machine_type"]
+            if t not in self.levels:
+                continue
+            hyp = self._cells(s)
+            F = [sum(self._cell(c0, c1, t, self.mu[t])[0] for c0, c1 in cells) for cells, _ in hyp]
+            T = [self._tied_raw(cells, t, k == 0) for k, (cells, _) in enumerate(hyp)]
+            wp = [(i, x) for i, x in enumerate(self._win_posterior(s)) if x > 1e-4] if self.couple else []
+            data.append((F, T, wp))
+        w, rho, g = self.tie_weight if isinstance(self.tie_weight, float) else .5, self.part_prior[:], self.prior[:]
+        cond = [row[:] for row in self.cond] if self.couple else None
+        self.joint_trace = []
+        for it in range(self.joint_iters):
+            Wt = 0.0; Rp = [0.0] * len(rho); G = [0.0] * K; Cc = [[0.0] * K for _ in range(S)]; ll_tot = 0.0; H = 0.0
+            for F, T, wp in data:
+                # shape-marginal log-likelihood per lag, and within-lag shape responsibilities
+                Lk, shp = [], []
+                for k in range(K):
+                    lf = math.log(1 - w) + F[k]
+                    if k == 0:
+                        lt = [math.log(w) + T[0]]
+                    else:
+                        lt = [math.log(w) + math.log(rp) + tp for rp, tp in zip(rho, T[k])]
+                    z = _logsumexp([lf] + lt); Lk.append(z)
+                    shp.append([math.exp(lf - z)] + [math.exp(x - z) for x in lt])
+                # source x lag responsibilities
+                terms = [(-1, k, math.log(c * g[k]) + Lk[k]) for k in range(K)]
+                if self.couple:
+                    terms += [(i, k, math.log((1 - c) * x * cond[i][k]) + Lk[k]) for i, x in wp for k in range(K)
+                              if cond[i][k] > 0]
+                z = _logsumexp([v for _, _, v in terms]); ll_tot += z
+                rk = [0.0] * K
+                for i, k, v in terms:
+                    p = math.exp(v - z); rk[k] += p
+                    if i < 0:
+                        G[k] += p
+                    else:
+                        Cc[i][k] += p
+                for k in range(K):
+                    tied = sum(shp[k][1:]); Wt += rk[k] * tied
+                    if k > 0:
+                        for j in range(len(rho)):
+                            Rp[j] += rk[k] * shp[k][1 + j]
+                    for pr in [rk[k] * shp[k][0]] + [rk[k] * x for x in shp[k][1:]]:
+                        if pr > 0:
+                            H -= pr * math.log(pr)
+            M = len(data)
+            w = min(.98, max(.02, Wt / M))
+            zr = sum(Rp); rho = [max(self.part_floor, x / zr) for x in Rp]; zr = sum(rho); rho = [x / zr for x in rho]
+            zg = sum(G)
+            if zg > 0:
+                g = [max(self.prior_floor, x / zg) for x in G]; zg = sum(g); g = [x / zg for x in g]
+            if self.couple:
+                cond = [[(Cc[i][k] + a * g[k]) / (sum(Cc[i]) + a) for k in range(K)] for i in range(S)]
+            self.joint_trace.append(dict(iter=it + 1, loglik=ll_tot, tie_weight=w, rho=rho[:], train_entropy=H / M))
+        self.tie_weight, self.part_prior, self.prior = w, rho, g
+        if self.couple:
+            self.cond = cond
+
+    def posterior_detail(self, q, seq_m):
+        """Posterior over (lag k, shape) at predict time, for diagnostics: list of (k, P(free), P(tied))."""
+        t = q["machine_type"]; tabs = self._tables(seq_m, self.mu[t], t)
+        post = self._size_posterior(tabs, self.size_prior(seq_m)); out = []
+        tie = self.tied and self.levels is not None and t in self.levels and isinstance(self.tie_weight, float)
+        for k, (cells, cur) in enumerate(self._cells(seq_m)):
+            if not tie:
+                out.append((k, post[k], 0.0)); continue
+            lf = math.log(1 - self.tie_weight) + sum(self._cell(c0, c1, t, self.mu[t])[0] for c0, c1 in cells)
+            lt = math.log(self.tie_weight) + self._tied(cells, cur, t, k_is_none=(k == 0))[0]
+            z = _logsumexp([lf, lt]); out.append((k, post[k] * math.exp(lf - z), post[k] * math.exp(lt - z)))
+        return out
 
     def size_prior(self, seq_m):
         if not self.couple:

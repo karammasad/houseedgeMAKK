@@ -46,7 +46,7 @@ class Model(GateModel):
                  npmle_min_wins=30, npmle_half_life=None,
                  gate_max_lag=8, gate_strength=4.0, gate_p_none=0.3, gate_learn_prior=True, gate_half_life=None, gate_cell_prior="beta",
                  gate_couple=False, gate_couple_alpha=5.0, gate_couple_mix=0.1, gate_couple_iters=1,
-                 gate_tied=False, gate_tie_weight=0.7,
+                 gate_tied=False, gate_tie_weight=0.7, gate_joint_em=False, gate_joint_iters=30,
                  win_model=None, win_kwargs=None, **kw):
         self.win_model, self.win_kwargs = win_model, dict(win_kwargs or {})
         base_kind = {"dirichlet": "dirichlet", "minka": "minka"}.get(sizes, "npmle")
@@ -62,6 +62,7 @@ class Model(GateModel):
                                    learn_prior=gate_learn_prior, half_life=gate_half_life,
                                    cell_prior=gate_cell_prior, couple=gate_couple, couple_alpha=gate_couple_alpha,
                                    couple_mix=gate_couple_mix, couple_iters=gate_couple_iters, win_cfg=self.cfg,
-                                   tied=gate_tied, tie_weight=gate_tie_weight)
+                                   tied=gate_tied, tie_weight=gate_tie_weight,
+                                   joint_em=gate_joint_em, joint_iters=gate_joint_iters)
         elif sizes not in ("npmle", "dirichlet", "minka"):
             raise ValueError(f"unknown sizes option {sizes!r}")
