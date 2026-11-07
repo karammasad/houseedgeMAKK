@@ -59,6 +59,37 @@ The stable, drift and shared_change ratios are identical in every row. Only shor
   `python -m common.evaluate --method adi --data data/adaptation --kwargs '{"max_lag": 12, "and_pairs": true, "prior_flips": true, "prune": 0.01, "floor": 0.05}' --test-out <csv>`
   Runtime: about 31 s for fit + validation predict on one CPU.
 
+## C5: short histories (learned cell priors + learned flip prior for short logs)
+
+**Result: tuning 55.676 / audit 55.196** (method 1: 55.054 / 54.795; previous adi: 55.104 / 54.864).
+short_history ratio 0.1313 -> 0.0967, and every other condition also improves (stable 0.0738 -> 0.0715,
+drift 0.0897 -> 0.0818, shared 0.0646 -> 0.0607). Fit + validation + test predict: 77 s on one CPU.
+
+Settings: `{"max_lag": 12, "and_pairs": true, "prior_flips": true, "prune": 0.01, "floor": 0.05,
+"cell_prior": "learn", "cell_group": "type", "p_change_short": "learn"}`
+
+What was done, in order:
+1. **Diagnosis** (`python -m adi.c5_decompose`): on short histories, perfect win probabilities would cut the
+   ratio to 0.063 and perfect sizes to 0.067. The error is about half gate, half sizes. C5 targets the gate half;
+   sizes belong to method 2.
+2. **Asymmetric cell prior.** Method 1 gives both gate cells a flat Beta(0.5, 0.5). adi uses an "on" and an
+   "off" Beta prior, averaged 50/50 over which cell is on, so polarity flips still just swap cells. The priors
+   are fitted on train by maximizing the model's marginal likelihood (coordinate ascent over mean/strength grids).
+   - One shared prior: 55.170, and short histories got worse (0.132). The fit sat on the grid edge.
+   - Train cell rates differ sharply by machine type (stable train machines, best pair):
+     steady on 0.93 / off 0.16, balanced 0.82 / 0.05, jackpot 0.55 / 0.02. Signal shifts them monotonically.
+   - Per type (`cell_group: "type"`): **55.428**. Per type x signal: 55.349 (thinner groups, slightly worse).
+   - Learned per-type priors: steady on Beta mean 0.95 (k=100) / off 0.15 (k=50); balanced 0.80 (25) / 0.07 (50);
+     jackpot 0.60 (25) / 0.02 (100). These match the hand-measured rates, with no condition labels used.
+3. **Flip prior for short logs.** TASK suggested p_change 0.7. On tuning, 0.7 is worse (55.33) and 0.3 better
+   (55.53). Rather than tune on validation, `p_change_short: "learn"` picks it by marginal likelihood of the
+   short train logs: it picks **0.05** -> 55.676. With only the last ~40 ticks observed, a flip is rarely worth
+   its prior cost.
+4. Not done: inferring missing ticks. Short logs still have ~40 usable windows (the recent consecutive block),
+   so imputation would recover only a few more per machine. Low value.
+5. `relearn` (re-learning the structure prior under the cell prior): 55.423, no gain. Left off.
+
 ## Not done yet (TASK.md order)
-C4 (L1 logistic fallback gate), C5 (short-history priors / p_change for 64-tick logs), C6 (episode-shared lag
-pairs/polarity), C7 (uniform-vs-learned robustness drill).
+C4 (L1 logistic fallback gate), C6 (episode-shared lag pairs/polarity), C7 (uniform-vs-learned robustness drill).
+Also untested: whether the per-type cell priors transfer to round 2 (they are re-learned from round 2's train
+in fit, so nothing is hardcoded).
