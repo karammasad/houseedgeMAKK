@@ -36,6 +36,16 @@ class Model(GateModel):
     def predict(self, pub, split):
         if not self.win_model:
             return super().predict(pub, split)
+        if self.joint_feedback:   # experiment 9: size -> win feedback through the joint win x size posterior
+            from method2_sizes.joint import joint_parts, assemble, lag_prior_rows
+            from adi.model import is_short
+            rows = lag_prior_rows(self.win, self.sizes); q, seq = load_split(pub, split); out = {}
+            for r in q:
+                s = seq[r["machine_id"]]
+                fb = self.joint_feedback == "all" or (self.joint_feedback == "short" and is_short(s))
+                P = joint_parts(self.win, self.sizes, rows, r, s)
+                out[r["query_id"]] = assemble(self.sizes, rows, r, s, P, fb, False, self.joint_beta)[0]
+            return out
         pw_pred = self.win.predict(pub, split)
         q, seq = load_split(pub, split); out = {}
         for r in q:
@@ -50,7 +60,8 @@ class Model(GateModel):
                  gate_tied=False, gate_tie_weight=0.7, gate_joint_em=False, gate_joint_iters=30,
                  gate_learn_direction=False, gate_direction_strength=20.0,
                  twolag=None, twolag_pairs="m1", twolag_eps=0.2,
-                 win_model=None, win_kwargs=None, **kw):
+                 win_model=None, win_kwargs=None, joint_feedback=None, joint_beta=1.0, **kw):
+        self.joint_feedback, self.joint_beta = joint_feedback, joint_beta
         self.win_model, self.win_kwargs = win_model, dict(win_kwargs or {})
         base_kind = {"dirichlet": "dirichlet", "minka": "minka"}.get(sizes, "npmle")
         super().__init__(sizes="dirichlet" if base_kind == "dirichlet" else "npmle", **kw)

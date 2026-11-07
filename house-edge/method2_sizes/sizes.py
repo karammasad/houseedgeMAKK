@@ -497,8 +497,12 @@ class GateSizes:
         return [(1 - m) * x + m * y for x, y in zip(p, self.prior)]
 
     def predict(self, q, seq_m):
-        t = q["machine_type"]; tabs = self._tables(seq_m, self.mu[t], t)
-        lw = [math.log(p) + ll for p, (ll, _) in zip(self.size_prior(seq_m), tabs)]; m = max(lw)
+        return self.predict_with_prior(q, seq_m, self.size_prior(seq_m))
+
+    def predict_with_prior(self, q, seq_m, prior, tabs=None):
+        """Same as predict() but with an explicit prior over size-lag hypotheses (joint win x size inference)."""
+        t = q["machine_type"]; tabs = self._tables(seq_m, self.mu[t], t) if tabs is None else tabs
+        lw = [math.log(p) + ll for p, (ll, _) in zip(prior, tabs)]; m = max(lw)
         w = [math.exp(x - m) for x in lw]; s = sum(w)
         a = sum(wi * pa for wi, (_, pa) in zip(w, tabs)) / s
         A = self.split_conc[t]; c = [sum(1 for v in seq_m if v == x) for x in (2, 5, 20)]

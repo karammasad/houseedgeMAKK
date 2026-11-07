@@ -1,5 +1,43 @@
 # Method 2 findings: payout sizes given a win
 
+## Experiments 9-10: bidirectional win x size inference (REVERTED on audit; final stays 58.074)
+
+**Question:** do size observations update the win-structure posterior? **No (before this):** adi's size-split gate
+uses PAST sizes as inputs to P(win), and method 2's coupling sends win evidence to the size lag only.
+
+**Joint model (`joint.py`):** P(s, tau, k | w, y) ∝ P(s) P(tau) P(w | s, tau) · pi_s(k) · P(y | w, k).
+No double counting: by the chain rule each tick's win/loss outcome is only in P(w|.), and each win's size outcome
+only in P(y|.); past values are conditioning inputs. Size -> win: reweight adi's structures by
+E_s = sum_k pi_s(k) L_k. With both directions off it reproduces FINAL to 1.1e-16.
+Option `joint_feedback` (None default | "short" | "all"), `joint_beta`.
+
+**Ablations (tuning half; FINAL gate = size_split):** one-way 58.080; size->win 58.150 (+.071; short .0577 ->
+.0506 but stable .0270 -> .0286); exact win->size with adi's posterior 57.902 (-.178: the coupling table was
+learned under method 1's structure family); both 57.972. With cell_signal: one-way 58.156, feedback all logs
+58.221, **short logs only 58.253 (+.097, other conditions unchanged)**, beta 1/2 58.201.
+
+**Keep checks (with audit):**
+| | tuning | audit | full | stable | short | drift | shared | verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| KC1: + adi cell_signal (= Adi's 598de5a) | 58.156 | 57.986 | 58.074 | .0211 | .0617 | .0257 | .0242 | KEEP, P=.999 |
+| KC2: + short-log size->win feedback | 58.253 | 57.971 | 58.118 | .0211 | .0586 | .0257 | .0242 | **REVERT**, P=.650 |
+
+KC2's audit is slightly worse (-0.015), so the +0.097 tuning gain does not generalize; final stays 58.074.
+
+**Experiment 10, uncertainty-adaptive gate (`adaptive.py`):** power posterior log P(s|w,y) = log P(s|w) +
+lam·log E_s. Gates: short-log rule; entropy of P(s|w) (no parameters); learned sigmoid(a + b·H + c·short) with a
+N(0, 2^2) prior, fit on TRAIN next-spin outcomes (labels + self-supervised cutoffs c-1, c-2, ticks < cutoff only).
+Tuning: short 58.253, entropy 58.235, learned 58.196 (it shrank to lam ≈ 0.5: binary outcomes carry little
+signal), full 58.221. Full-feedback gain on the win part by entropy tercile: long logs negative in ALL terciles
+(-.00026/-.00007/-.00011); short logs +.00197 in the top tercile, ~0 otherwise. Entropy barely varies
+(terciles .328/.353), so history length is the better proxy. No adaptive gate beats the short-log rule, and
+that rule failed on audit, so none was promoted.
+**Episode-grouped 5-fold CV on train (`adaptive_cv.py`, diagnostic; population priors shared across folds):**
+2304 examples from 96 episodes. Out-of-fold log-loss: none .28319, short .28326, entropy .28326, learned .28323,
+full .28323 (Brier .08191-.08197). All gates are within 0.0001, and "none" is marginally best. The learned
+coefficients flip sign across folds (b from -.25 to +.12): not identifiable from next-spin outcomes. This agrees
+with KC2's audit: size -> win feedback is not a robust gain.
+
 ## Experiment 8: sparse two-lag size expert (REJECTED on tuning; does not change the final model)
 
 Note: evaluated against the joint-EM final (57.787) with adi's C5 gate fixed. Meanwhile Adi promoted adi's

@@ -52,3 +52,6 @@ To measure size changes alone, keep the gate fixed (same Model settings) and cha
 - UPDATE 6 (made by Adi, at Adi's request): adi's signal-slope cell prior (`"cell_signal": True` in `ADI`, adi round 5).
   Keep check vs previous final: tuning 58.156 (+0.076), audit 57.986 (+0.154), full 58.074 (+0.114), 4/4
   conditions, bootstrap P=0.999. Upload files rebuilt in out/main_entry/ (SHA 56c5cd55).
+- EXPERIMENTS 9-10 (reverted): joint win x size inference (`joint_feedback`, joint.py) and adaptive feedback gates
+  (adaptive.py). KC1 (= Adi's cell_signal) KEEP 58.074; KC2 short-log feedback REVERT (audit -0.015, P=.65).
+  Final unchanged: 58.074, CSV SHA 56c5cd55 (re-verified with the current code).

@@ -77,5 +77,34 @@ class TestGateSizes(unittest.TestCase):
         self.assertEqual(self._preds(again), self._preds(self.dirm))
 
 
+class TestJointMath(unittest.TestCase):
+    """Experiment 9: size -> win feedback math on synthetic inputs (no data or model fit needed)."""
+    class _Sizes:
+        def predict(self, r, s):
+            return [.4, .3, .2, .1]
+
+    def _P(self, logE):
+        # two structures; structure 0 says P(win)=.9, structure 1 says .1; equal win evidence
+        flat = [(math.log(.5), .9, 0), (math.log(.5), .1, 1)]
+        return dict(flat=flat, z0=0.0, logE=logE, post_s=[.5, .5], tabs=None, K=1)
+
+    def test_no_feedback_is_win_posterior_mean(self):
+        from method2_sizes.joint import assemble
+        p, post = assemble(self._Sizes(), None, {}, [], self._P([0.0, 0.0]), feedback=False, size_from_adi=False)
+        self.assertAlmostEqual(1 - p[0], .5, places=12); self.assertEqual(post, [.5, .5])
+
+    def test_equal_size_evidence_changes_nothing(self):
+        from method2_sizes.joint import assemble
+        p, _ = assemble(self._Sizes(), None, {}, [], self._P([-3.0, -3.0]), feedback=True, size_from_adi=False)
+        self.assertAlmostEqual(1 - p[0], .5, places=12)
+
+    def test_feedback_moves_toward_size_supported_structure(self):
+        from method2_sizes.joint import assemble
+        p, post = assemble(self._Sizes(), None, {}, [], self._P([0.0, math.log(1 / 9)]), feedback=True,
+                           size_from_adi=False)
+        self.assertAlmostEqual(post[0], .9, places=12); self.assertAlmostEqual(1 - p[0], .9 * .9 + .1 * .1, places=12)
+        self.assertAlmostEqual(sum(p), 1.0, places=12); self.assertTrue(all(x >= 0 for x in p))
+
+
 if __name__ == "__main__":
     unittest.main()
