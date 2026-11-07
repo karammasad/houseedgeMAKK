@@ -26,6 +26,8 @@ def structures(max_lag=8, xor_order=2, and_pairs=False, and_max_lag=None):
 
 def gate_value(form, lags, w, t):
     """Gate bit at tick t from wins strictly before t, or None if any input tick is missing."""
+    if form in ("xs", "xst"):  # size-split forms: the gate bit is the XOR of the pair (the split only refines cells)
+        form, lags = "xor", lags[:2]
     if form == "xor":
         x = 0
         for l in lags:

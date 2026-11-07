@@ -231,3 +231,20 @@ To adopt: add `"cell_signal": True` to `ADI` in method2_sizes/round2.py and rebu
 C4 (L1 logistic fallback gate), C6 (episode-shared lag pairs/polarity), C7 (uniform-vs-learned robustness drill).
 Also untested: whether the per-type cell priors transfer to round 2 (they are re-learned from round 2's train
 in fit, so nothing is hardcoded).
+
+## Method 4 stacker on top of the current FINAL (rejected)
+
+method4_ml v4 (gradient-boosted tree stacker, scikit-learn; not a neural net) rebuilt on adi's current gate
+(size_split + cell_signal), vs FINAL (method2_sizes, same gate), method2_sizes.keepcheck, scikit-learn 1.9.1 in a
+temporary venv:
+
+| | tuning | audit | full | stable | short | drift | shared |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| FINAL (uploaded, 56c5cd55) | 58.156 | 57.986 | 58.074 | .0211 | .0617 | .0257 | .0242 |
+| method 4 stacker on the same gate | 58.185 | 58.011 | 58.101 | .0193 | .0603 | .0265 | .0246 |
+
+VERDICT REVERT: +0.03, bootstrap P(better) = 0.82, 2/4 conditions better, and it needs scikit-learn in the entry.
+The stacker's earlier +0.055 has mostly been absorbed by the size split and signal prior.
+Fix made for compatibility: `gate.gate_value` now handles the "xs"/"xst" forms (returns the pair's XOR bit).
+method4's features call it, and it crashed with int('') before. adi's own predictions are unchanged
+(FINAL rebuilds to 56c5cd55).
