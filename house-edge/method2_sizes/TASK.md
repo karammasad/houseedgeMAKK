@@ -34,3 +34,6 @@ To measure size changes alone, keep the gate fixed (same Model settings) and cha
   `{"sizes":"gate","gate_cell_prior":"npmle","gate_couple":true,"gate_couple_iters":20,"gate_tied":true}` →
   tuning 56.999, audit 56.974, full validation 56.985 (+2.06 vs entry). Ship with:
   python tools/make_entry.py --method method2_sizes --kwargs '<that JSON>' --data data/main --out build/main
+- UPDATE 3: stacked on adi's C5 gate (`win_model="adi"`) + learned tie weight → tuning 57.746, audit 57.490,
+  full validation 57.622. Final settings = FINAL in round2.py. Round-two runbook: `python -m method2_sizes.round2`.
+  Packaging: use `python -m method2_sizes.make_entry` (copy that also packages adi/; verified rerun-identical).

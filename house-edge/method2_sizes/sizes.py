@@ -90,6 +90,7 @@ class GateSizes:
                  cell_prior="beta", grid=49, npmle_iters=200, split_conc_cap=1e6,
                  couple=False, couple_alpha=5.0, couple_mix=0.1, couple_iters=1, win_cfg=None, tied=False, tie_weight=0.7, part_floor=0.02):
         self.tied, self.tie_weight, self.part_floor = tied, tie_weight, part_floor
+        self.tie_weight_setting = tie_weight   # "learn" -> fitted on train in fit()
         self.levels = None; self.part_prior = None
         self.couple, self.couple_alpha, self.couple_mix = couple, couple_alpha, couple_mix
         self.couple_iters = couple_iters
@@ -165,7 +166,7 @@ class GateSizes:
         """Per hypothesis (no gate, lag 1..max_lag): (log marginal likelihood, predicted a at the cutoff).
         With tying on, each lag mixes its free-cell model with its tied two-state model (weight tie_weight)."""
         res = []
-        tie = self.tied and self.levels is not None and t in self.levels
+        tie = self.tied and self.levels is not None and t in self.levels and isinstance(self.tie_weight, float)
         for k, (cells, cur) in enumerate(self._cells(seq_m)):
             parts = [self._cell(c0, c1, t, mu) for c0, c1 in cells]
             free = (sum(p[0] for p in parts), parts[cur][1])
@@ -242,6 +243,8 @@ class GateSizes:
             self._fit_atoms(queries, seq)
         if self.tied and self.atoms is not None:
             self._fit_levels_and_partitions(queries, seq)
+            if self.tie_weight_setting == "learn":
+                self._fit_tie_weight(queries, seq)
         L = self.max_lag
         prior = [self.p_none] + [(1 - self.p_none) / L] * L
         if self.learn_prior:   # how often each hypothesis is the most likely one on train machines
@@ -257,6 +260,29 @@ class GateSizes:
         if self.couple:
             self._fit_coupling(queries, seq)
         return self
+
+    def _fit_tie_weight(self, queries, seq, iters=20):
+        """EM for the weight of the two-state (tied) model vs free cells, on train machines' best lag.
+        If a new round's sizes are not two-state, tied hypotheses lose likelihood and the weight falls,
+        so the free-cell fallback takes over automatically. Clipped to [0.02, 0.98]."""
+        pairs = []
+        for r in queries:
+            s = seq[r["machine_id"]]; t = r["machine_type"]
+            if t not in self.levels:
+                continue
+            hyp = self._cells(s)
+            free = [sum(self._cell(c0, c1, t, self.mu[t])[0] for c0, c1 in cells) for cells, _ in hyp]
+            k = max(range(1, len(hyp)), key=free.__getitem__)
+            cells, cur = hyp[k]
+            pairs.append((free[k], self._tied(cells, cur, t)[0]))
+        w = 0.5
+        for _ in range(iters):
+            acc = 0.0
+            for lf, lt in pairs:
+                a, b = math.log(1 - w) + lf, math.log(w) + lt; m = max(a, b)
+                acc += math.exp(b - m) / (math.exp(a - m) + math.exp(b - m))
+            w = min(.98, max(.02, acc / max(1, len(pairs))))
+        self.tie_weight = w
 
     def _fit_levels_and_partitions(self, queries, seq):
         """Two levels per type = weighted means of the learned NPMLE atoms below / above the type mean.

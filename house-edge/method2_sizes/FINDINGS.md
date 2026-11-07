@@ -1,5 +1,9 @@
 # Method 2 findings: payout sizes given a win
 
+## ★★★ Update 3: current best and team recommendation → see TEAM_SUMMARY.md
+adi C5 gate × method 2 sizes (coupled + tied, learned tie weight): tuning 57.746, audit 57.490, full 57.622.
+Error decomposition: 79% of remaining error is the win side (jackpot win-rate estimation), 21% sizes.
+
 ## ★★ Update 2: short-history fix (supersedes the size-gate candidate below)
 
 **Candidate:** `{"sizes":"gate","gate_cell_prior":"npmle","gate_couple":true,"gate_couple_iters":20,"gate_tied":true}`
