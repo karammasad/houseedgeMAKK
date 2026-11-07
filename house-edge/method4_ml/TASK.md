@@ -10,7 +10,12 @@ Gradient learners can't discover parities from raw inputs (Shalev-Shwartz et al.
 - `model.py`: scikit-learn HistGradientBoostingClassifier on train-history ticks (subsampled to 150k).
   Score: 48.60 tuning (Method 1: 55.05). Needs `pip install scikit-learn`; cannot ship yet (see AGENTS.md rule 4).
 
-## v5 (current, model.py): tuning 58.236, audit 58.143, FULL VALIDATION 58.190 (kit checker 58.189711 / 60)
+## v7 (current, model.py): tuning 58.260, audit 58.242, FULL 58.249
+v7 = v6 (bag of 5 tick samples) + a 50/50 blend with a structured offset-logistic correction of P(win) (`logit_stack.py`: size-state x P,
+size-state x (1-P), P(change) x (2P-1), per machine type; gate logit fixed as the offset; l2=1). Keep-check vs v6: KEEP (P .986, 4/4).
+See RESEARCH_LOG.md (experiments 18-24) for what else was tested; main-round error is near the ceiling.
+
+## v5 (previous, model.py): tuning 58.236, audit 58.143, FULL VALIDATION 58.190 (kit checker 58.189711 / 60)
 Team best before this (adi size_split + Momin FINAL sizes): 58.080 / 57.832 / 57.960. v5 gain: +0.156 tuning / +0.311 audit
 (passes the 0.15 rule on both halves). v4 was 57.956 / 57.768 / 57.865.
 Pieces:

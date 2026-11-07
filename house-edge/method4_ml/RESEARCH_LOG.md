@@ -6,7 +6,11 @@ split). Rule: select on tuning only; check audit once per final candidate; adopt
 All validation-target reads below are in analysis/ scripts (diagnosis), never in fit/predict.
 
 ## Current strongest model
-v6 = v5 + bagging over 5 tick samples: tuning 58.245 / audit 58.153 / full 58.199. Honest expected gain over a typical single
+v7 = v6 + 50/50 structured offset-logistic correction: tuning 58.260 / audit 58.242 / full 58.249 (keep-check vs v6 KEEP, P .986).
+Team comparison (adi round 7, stdlib only, 58.214 full): v7 is +0.035 full; the gap is within what 6 vs ~17 correction terms and
+the tree blend can explain, so treat them as equivalent in strength.
+
+v6 (previous) = v5 + bagging over 5 tick samples: tuning 58.245 / audit 58.153 / full 58.199. Honest expected gain over a typical single
 tick sample: +0.033 full (v5's 58.190 was partly sampling luck; mean single sample 58.166).
 
 ## Previous baseline (immutable reference for the research round)
@@ -53,6 +57,11 @@ Each: mechanism -> evidence -> falsifier -> result. Gains are vs the stated base
 | 18 | Raw history holds signal v5 ignores (a sequence model could find it) (C/I) | cross-fitted GBM on raw lags 1-60, counts, neighbours -> v5 errors, 5 fold seeds (`analysis/raw_info.py`) | WIN: none (R^2 -0.11, all seeds < 0): sequence models ruled out for P(win). SIZE: R^2 +0.068 (+.04 to +.10), carried by whole-history payout counts; size model is calibrated except jackpot slope .90 (`analysis/size_shrink.py`); estimated value <= +0.04, not pursued. |
 | 19 | Size evidence should update the win structure (short logs) | read Method 2 experiments 9-10 | ALREADY FALSIFIED by Method 2 (tuning +.097, audit -.015, train CV flat). Not repeated. |
 | 20 | Stacker variance from WHICH ticks are sampled (D: variance) | 5 independent tick samples; bag of 3 / 5 (`analysis/bagging.py`) | SELECTION BIAS FOUND: v5's sample 0 was the luckiest of 5 (full 58.119-58.190, mean 58.166). Bag of 5: 58.245 / 58.153 / full 58.199, above every single sample on both halves. ADOPTED as v6 (`bags=5`). |
+
+| 21 | A small STRUCTURED correction with the gate logit as a fixed offset generalizes better than trees (adi round 7 idea, extended) (H: objective/inductive bias) | offset-logistic (IRLS) on size-state, change-posterior and signal terms; l2 and blend grids (`logit_stack.py`, `analysis/logit_stack_test.py`, `logit_stack_grid.py`) | ADOPTED as v7: adi's 6-term form reproduces in my pipeline (58.211 full vs their 58.214); `d + chg` (+ P(change) x logit) and a 50/50 blend with the trees give 58.260 / 58.242 / full 58.249. Surface is flat in l2 and spec (58.24-58.25). Keep-check vs v6: P(better) .986, 4/4 conditions. |
+| 22 | Machines of a shared_change episode flip at the SAME tick, so pooling tau across the 8 machines sharpens each one (L: structure) | train: within-episode sd of posterior flip time (`analysis/tau_sharing.py`) | STRUCTURE CONFIRMED (0.9 ticks within shared episodes vs 18.6 between; drift 12.7) but GAIN FALSIFIED: the mixture model (`shared_flip.py`) moves shared-change error .0245 -> .0243 (the flip time is already pinned by each machine's own post-flip ticks) and HURTS short logs (.0612 -> .0664: false 'shared' calls on sparse logs). Not used. |
+| 23 | The episode's condition (stable / drift / shared) is identifiable from histories alone (B: regimes) | P(H_shared) per condition, no labels | CONFIRMED as a finding: mean P(H_shared) = 1.000 (shared), 0.002 (drift), 0.000 (stable) on validation. NOT exploitable here: each machine's own posterior already says whether and when it flipped (only 7 of 768 validation machines are ambiguous). Possibly useful if round 2 changes the flip structure. |
+| 24 | RETRACTION | first run of #21 used hand-counted column indices that were off by 3 | Every term was built from the wrong columns (adi's correction scored BELOW the gate alone, contradicting adi's 58.214); `check_layout()` now asserts the layout, results above are from the fixed run. |
 
 Eliminated classes: change-model shape (4, 5, 6, 7), cross-machine information (10, 11), richer population priors (8, 9),
 more learner capacity / data / objective tweaks (3, 12, 13, 15).

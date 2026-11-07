@@ -19,6 +19,7 @@ from method4_ml.pooled import pooled_split
 from method4_ml.signal_shift import attach_signal_shift
 from method4_ml.features3 import episode_examples
 from method4_ml.size_hmm import SizeHMM
+from method4_ml.logit_stack import design, fit_offset_logistic, predict as lr_predict, check_layout
 
 FEATURE_VERSION = "f3.5"
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -75,7 +76,7 @@ class GateInit:
 
 class Model:
     def __init__(self, variant="v3", stack="hgb", n_estimators=150, max_depth=3, subsample=0.8, K=6, K_short=6, t_min=100, splits="all", lr=0.03, max_leaf_nodes=15,
-                 min_samples_leaf=1000, l2=1.0, max_iter=400, seeds=3, blend=0.4, sizes="gate", gate=None, size_kw=None, size_pool="train", signal_shift=True, size_feat=True, size_stack=False, size_blend=0.5, tick_seed=0, bags=5,
+                 min_samples_leaf=1000, l2=1.0, max_iter=400, seeds=3, blend=0.4, sizes="gate", gate=None, size_kw=None, size_pool="train", signal_shift=True, size_feat=True, size_stack=False, size_blend=0.5, tick_seed=0, bags=5, lr_weight=0.5, lr_spec=("d", "chg"), lr_l2=1.0,
                  workers=None, cache=True, **v1kw):
         self.variant = variant
         if variant == "v1":
@@ -88,6 +89,7 @@ class Model:
         self.seeds, self.blend, self.sizes_kind, self.signal_shift = seeds, blend, sizes, signal_shift
         self.size_feat, self.size_stack, self.size_blend = size_feat, size_stack, size_blend
         self.tick_seed = tick_seed   # which random history ticks become training examples (0 = original sample)
+        self.lr_weight, self.lr_spec, self.lr_l2 = lr_weight, tuple(lr_spec), lr_l2
         self.bags = bags             # bagging: stackers trained on `bags` independent tick samples, probabilities averaged
         self.stack = stack
         self.og = dict(learning_rate=lr, n_estimators=n_estimators, max_depth=max_depth, subsample=subsample,
@@ -174,7 +176,7 @@ class Model:
         if self.sizes_kind in ("hmm", "mix"):
             q, seq = load_split(pub, "train"); self.size_models["hmm"] = SizeHMM().fit(q, seq)
         splits = ["train", "validation", "test"] if self.splits == "all" else ["train"]
-        self.clfs = []; base_seed = self.tick_seed
+        self.clfs = []; base_seed = self.tick_seed; Xall, yall = [], []
         for bag in range(self.bags):     # each bag: its own random training ticks (selection-luck reduction, analysis/bagging.py)
             self.tick_seed = base_seed + bag
             X, y = [], []
@@ -182,13 +184,19 @@ class Model:
                 if os.path.exists(os.path.join(pub, s, "history.csv")):
                     a, b, _ = self._features(pub, s); X += a; y += b
             self.n_train = len(X); ypay = y; y = [int(v > 0) for v in ypay]
-            X = self._sel(X)
+            X = self._sel(X); Xall.append(X); yall += y
             if self.stack == "offset":
                 from sklearn.ensemble import GradientBoostingClassifier
                 self.clfs += [GradientBoostingClassifier(init=GateInit(), random_state=k, **self.og).fit(X, y) for k in range(self.seeds)]
             else:
                 self.clfs += [HistGradientBoostingClassifier(random_state=k, **self.gbm).fit(X, y) for k in range(self.seeds)]
         self.tick_seed = base_seed
+        self.beta = None
+        if self.lr_weight > 0:   # structured offset-logistic correction of the gate's P(win) (adi round 7 idea, extended)
+            import numpy as np
+            XA = np.vstack(Xall); check_layout(XA); yA = np.asarray(yall)
+            off = np.log(np.clip(XA[:, 0], 1e-4, 1 - 1e-4) / (1 - np.clip(XA[:, 0], 1e-4, 1 - 1e-4)))
+            self.beta = fit_offset_logistic(design(XA, self.lr_spec), yA, off, self.lr_l2)
         self.sclfs = []
         if self.size_stack:    # P(1x | win) stacker on the same features, winning ticks only
             wi = [i for i, v in enumerate(ypay) if v > 0]; Xs = X[wi]; ys = [int(ypay[i] == 1) for i in wi]
@@ -209,6 +217,12 @@ class Model:
             for i, p in enumerate(c.predict_proba(X)[:, 1]):
                 P[i] += p / len(self.clfs)
         pw = {qid: self.blend * p + (1 - self.blend) * x[0] for qid, p, x in zip(ids, P, Xraw)}
+        if self.beta is not None and self.lr_weight > 0:
+            import numpy as np
+            XQ = np.asarray(Xraw, float); check_layout(XQ)
+            off = np.log(np.clip(XQ[:, 0], 1e-4, 1 - 1e-4) / (1 - np.clip(XQ[:, 0], 1e-4, 1 - 1e-4)))
+            lr = lr_predict(design(XQ, self.lr_spec), self.beta, off)
+            pw = {qid: self.lr_weight * float(l) + (1 - self.lr_weight) * pw[qid] for qid, l in zip(ids, lr)}
         key = (os.path.abspath(pub), split, tuple(self.size_models))   # sizes do not depend on blend / GBM: reuse
         cache = self.__dict__.setdefault("_sz", {})
         if key not in cache:
