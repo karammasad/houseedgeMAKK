@@ -146,6 +146,61 @@ Ideas not tried: a flexible (NPMLE) prior over cell rates per type with an addit
 neighbour effect differ by machine type; using adi's win-gate posterior inside GateSizes' coupling (needs a hook
 in method2_sizes).
 
+## Round 4: the win rate depends on the hidden size state -> size-split gate (KEEP)
+
+**Finding** (validation truth, analysis only): within each machine type, the true P(1x | win) takes exactly two
+values (jackpot 0.12 / 0.34, balanced 0.21 / 0.50, steady 0.46 / 0.75), i.e. a binary hidden size state. The
+true on-cell WIN rate depends on that same state: jackpot 0.70 vs 0.49, balanced 0.88 vs 0.80. corr(P(win),
+E[size | win]) in on-cells: jackpot +0.68, balanced +0.48. Method 2's predicted size state correlates -0.46 /
+-0.43 / -0.29 with adi's win-rate residuals. That's the "unexplained jackpot variance" from round 3. (No
+fixed return-to-player: RTP varies a lot.)
+
+**Model** (`size_split: true`): adds an "xs" structure for every kept XOR pair (i, j). Its gate cells are split
+by the payout category (loss / 1x / big) at the smaller lag i, where method 2 found the size gate lives. That
+gives 6 cells; flips swap the XOR side and keep the category; on/off priors and the polarity mixture work as
+before. The prior over plain + split structures is re-learned on train under the learned per-type cell priors
+(flip-aware): split structures get about 54% (smaller lag), in line with method 2's "size lag = win pair's
+first lag". Learning that prior under flat Beta(0.5, 0.5) cell priors gave splits only 7%, because flat priors
+over-penalize extra cells.
+
+**Results.** adi alone (npmle sizes): 55.676 -> 55.842 tuning (stable .0715 -> .0610).
+Inside the team's best model (method2_sizes `round2.FINAL`, the uploaded main entry), via
+`win_kwargs + {"size_split": true}`, with `python -m method2_sizes.keepcheck`:
+
+| | tuning | audit | full val | stable | short | drift | shared |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| FINAL (uploaded, d39f5332) | 57.746 | 57.490 | 57.622 | .0329 | .0711 | .0322 | .0289 |
+| **FINAL + adi size_split** | **57.926** | **57.657** | **57.796** | .0251 | .0710 | .0294 | .0271 |
+| FINAL + size_split, long logs only | 57.958 | 57.602 | 57.786 | .0251 | .0717 | .0294 | .0271 |
+
+Re-checked after method 2 promoted joint EM into FINAL (3ef2af9, upload 450755db):
+
+| | tuning | audit | full val | stable | short | drift | shared |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| FINAL with joint EM (uploaded, 450755db) | 57.901 | 57.665 | 57.787 | .0321 | .0644 | .0296 | .0271 |
+| **FINAL with joint EM + adi size_split** | **58.080** | **57.832** | **57.960** | .0243 | .0644 | .0268 | .0253 |
+
+Keep-check: KEEP (P(better) = 1.000, 4/4 conditions better). Test CSV deterministic (SHA-256 e2686e96...), passes
+the kit checker, fit + test predict 117 s. The uploaded FINAL still rebuilds byte-identical with this adi code.
+
+Keep-check verdict vs the earlier FINAL, plain size split: **KEEP** (bootstrap P(better) = 1.000, 4/4 conditions better,
+none worse, ~108 s). Long-only also passes but is lower on audit and full validation, so it isn't used.
+Variants on adi alone: split at both lags 55.841, tied 4-cell split (`"tied"`) 55.864, tied+free 55.853, all
+about the same as the plain split. Kept the simplest.
+
+Checks vs the earlier FINAL: it still rebuilt byte-identical (d39f5332); FINAL + split was deterministic
+(fd73511f...).
+
+**To adopt (Person B / submission owner):** add `size_split=True` to `ADI` (the win_kwargs) in
+`method2_sizes/round2.py`, rebuild with `python -m method2_sizes.make_entry` and re-upload. Not edited by me:
+it's method 2's file.
+
+Also checked and rejected:
+- Recalibration (Ranjan & Gneiting beta-transformed pool): FINAL is already calibrated
+  (truth ~ 1.00-1.06 x ours for every outcome).
+- A joint (on, off) NPMLE rate prior (Koenker & Gu, bivariate binomial mixture) would replace the Beta priors.
+  It's the next research-backed idea, but it needs an atom grid inside every structure x flip evaluation (slow).
+
 ## Not done yet (TASK.md order)
 C4 (L1 logistic fallback gate), C6 (episode-shared lag pairs/polarity), C7 (uniform-vs-learned robustness drill).
 Also untested: whether the per-type cell priors transfer to round 2 (they are re-learned from round 2's train

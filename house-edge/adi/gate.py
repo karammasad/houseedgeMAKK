@@ -68,6 +68,100 @@ def _cell_mixture(nz, kz, zc, cp):
     return ll, (wA * pA + wB * pB) / s
 
 
+def _cat3(v):
+    return 0 if v == 0 else (1 if v == 1 else 2)  # loss / 1x / big (v >= 0 assumed)
+
+
+def _split_flip(c):
+    return (c + 3) % 6  # swap the XOR side, keep the size category
+
+
+def _split_mixture(nz, kz, zc, cp, a=.5, b=.5):
+    """Size-split gate ("xs"): 6 cells = XOR side (0/1) x payout category at the split lag (loss/1x/big).
+    With cp = (a_on, b_on, a_off, b_off), the three sub-cells on the 'on' side use the on prior and the
+    others the off prior, averaged 50/50 over which side is on (as in _cell_mixture). Each sub-cell has its
+    own rate, so a machine whose win rate depends on its hidden size state can express it."""
+    if cp is None:
+        cp = (a, b, a, b)
+    a1, b1, a0, b0 = cp
+    def part(c, a_, b_):
+        return betaln(kz[c] + a_, nz[c] - kz[c] + b_) - betaln(a_, b_) if nz[c] else 0.0
+    lA = sum(part(c, a1, b1) for c in range(3)) + sum(part(c, a0, b0) for c in range(3, 6))
+    lB = sum(part(c, a0, b0) for c in range(3)) + sum(part(c, a1, b1) for c in range(3, 6))
+    m = max(lA, lB); wA = math.exp(lA - m); wB = math.exp(lB - m); s = wA + wB
+    ll = m + math.log(s / 2)
+    def rate(c, on):
+        a_, b_ = (a1, b1) if on else (a0, b0)
+        return (kz[c] + a_) / (nz[c] + a_ + b_)
+    if zc is None:
+        n = sum(nz); f = [(nz[c] + 1 / 6) / (n + 1) for c in range(6)]
+        pA = sum(f[c] * rate(c, c < 3) for c in range(6)); pB = sum(f[c] * rate(c, c >= 3) for c in range(6))
+    else:
+        pA = rate(zc, zc < 3); pB = rate(zc, zc >= 3)
+    return ll, (wA * pA + wB * pB) / s
+
+
+def _group_mixture(nz, kz, zc, cp, a=.5, b=.5):
+    """Like _split_mixture for any even number of cells: first half = XOR side 0, second half = side 1."""
+    if cp is None:
+        cp = (a, b, a, b)
+    a1, b1, a0, b0 = cp; h = len(nz) // 2
+    def part(c, a_, b_):
+        return betaln(kz[c] + a_, nz[c] - kz[c] + b_) - betaln(a_, b_) if nz[c] else 0.0
+    lA = sum(part(c, a1, b1) for c in range(h)) + sum(part(c, a0, b0) for c in range(h, 2 * h))
+    lB = sum(part(c, a0, b0) for c in range(h)) + sum(part(c, a1, b1) for c in range(h, 2 * h))
+    m = max(lA, lB); wA = math.exp(lA - m); wB = math.exp(lB - m); s = wA + wB
+    ll = m + math.log(s / 2)
+    def rate(c, on):
+        a_, b_ = (a1, b1) if on else (a0, b0)
+        return (kz[c] + a_) / (nz[c] + a_ + b_)
+    if zc is None:
+        n = sum(nz); f = [(nz[c] + 1 / (2 * h)) / (n + 1) for c in range(2 * h)]
+        pA = sum(f[c] * rate(c, c < h) for c in range(2 * h)); pB = sum(f[c] * rate(c, c >= h) for c in range(2 * h))
+    else:
+        pA = rate(zc, zc < h); pB = rate(zc, zc >= h)
+    return ll, (wA * pA + wB * pB) / s
+
+
+def _tie_rows(rows6, single):
+    """Merge 6 split cells (side x category) into 4 (side x state): state 1 = category `single`, 0 = the others."""
+    def idx(c):
+        return (c // 3) * 2 + int(c % 3 == single)
+    out = []
+    for nz, kz, zc in rows6:
+        n4 = [0.0] * 4; k4 = [0.0] * 4
+        for c in range(6):
+            n4[idx(c)] += nz[c]; k4[idx(c)] += kz[c]
+        out.append((n4, k4, None if zc is None else idx(zc)))
+    return out
+
+
+def _split_counts(seq_m, w, cut, taus, st, wt):
+    i, j, k = st; ts, cs, ys = [], [], []
+    for t in range(max(st), len(w)):
+        if w[t] < 0 or w[t - i] < 0 or w[t - j] < 0 or seq_m[t - k] < 0:
+            continue
+        ts.append(t); cs.append((w[t - i] ^ w[t - j]) * 3 + _cat3(seq_m[t - k])); ys.append(w[t])
+    n = [[0] for _ in range(6)]; kk = [[0] for _ in range(6)]
+    for t, c, y in zip(ts, cs, ys):
+        v = wt(t)
+        for d in range(6):
+            n[d].append(n[d][-1] + v * (c == d)); kk[d].append(kk[d][-1] + v * (c == d and y == 1))
+    N = [x[-1] for x in n]; K = [x[-1] for x in kk]
+    xc = None
+    if cut - k >= 0 and all(w[cut - l] >= 0 for l in (i, j)) and seq_m[cut - k] >= 0:
+        xc = (w[cut - i] ^ w[cut - j]) * 3 + _cat3(seq_m[cut - k])
+    rows = []
+    for tau in list(taus) + [None]:
+        if tau is None:
+            rows.append((N[:], K[:], xc)); continue
+        q = bisect_left(ts, tau)
+        nz = [n[d][q] + (N[_split_flip(d)] - n[_split_flip(d)][q]) for d in range(6)]
+        kz = [kk[d][q] + (K[_split_flip(d)] - kk[_split_flip(d)][q]) for d in range(6)]
+        rows.append((nz, kz, None if xc is None else _split_flip(xc)))
+    return rows
+
+
 def machine_counts(seq_m, cut, taus, ST, half_life=None):
     """Sufficient statistics, independent of any cell prior. Per structure: list over taus (+ None = no flip) of
     (nz, kz, zc): ticks and wins per gate cell (after the flip, if any) and the cell the cutoff falls in.
@@ -76,6 +170,10 @@ def machine_counts(seq_m, cut, taus, ST, half_life=None):
     w = wins(seq_m); out = []
     wt = (lambda t: 1.0) if half_life is None else (lambda t: 2.0 ** (-(cut - 1 - t) / half_life))
     for form, st in ST:
+        if form == "xs":
+            out.append(_split_counts(seq_m, w, cut, taus, st, wt)); continue
+        if form == "xst":  # tied size split: lags (i, j, k, single category that forms its own state)
+            out.append(_tie_rows(_split_counts(seq_m, w, cut, taus, st[:3], wt), st[3])); continue
         ts, xs, ys = [], [], []
         for t in range(max(st), len(w)):
             if w[t] < 0:
@@ -112,6 +210,10 @@ def tables_from_counts(C, ntau, a, b, cellprior=None):
     for rows in C[:-1]:
         res = []
         for nz, kz, zc in rows:
+            if len(nz) == 6:
+                res.append(_split_mixture(nz, kz, zc, cellprior, a, b)); continue
+            if len(nz) == 4:
+                res.append(_group_mixture(nz, kz, zc, cellprior, a, b)); continue
             if cellprior is None:
                 ll = betaln(kz[0] + a, nz[0] - kz[0] + b) + betaln(kz[1] + a, nz[1] - kz[1] + b) - base
                 if zc is None:

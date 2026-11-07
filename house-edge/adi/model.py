@@ -25,6 +25,12 @@ Settings
                at prediction time to long logs only (it hurts short logs); priors are learned unweighted.
   neighbor_adjust  add beta * (episode neighbours' recent-minus-long-run win rate over the last W ticks) to
                P(win); W and beta fitted by least squares on train labels ("hot room" effect)
+  size_split   True / "small" / "both" / "tied" / "tied+free": add "xs" structures, each kept XOR pair (i, j) with its cells split by
+               the payout category (loss / 1x / big) at its smaller lag i ("both": also at j), so the win rate can
+               depend on the hidden size state. "tied": cells merge into two size states (one category vs the
+               other two, averaged over the 3 groupings) = 4 cells. Prior over plain + split re-learned under the
+               cell priors (round 4)
+  split_long_only  with size_split: use split structures only for long logs (short logs keep plain pairs)
   sizes        "npmle" (default, = method 1), "dirichlet", or "gate" (method2_sizes.GateSizes, imported as-is)
   gate_*       passed to GateSizes when sizes="gate": gate_max_lag, gate_strength, gate_p_none,
                gate_learn_prior, gate_half_life, gate_cell_prior, gate_couple, gate_couple_alpha, gate_couple_mix,
@@ -86,7 +92,8 @@ class Model:
                  gate_p_none=0.3, gate_learn_prior=True, gate_half_life=None, gate_cell_prior="beta",
                  gate_couple=False, gate_couple_alpha=5.0, gate_couple_mix=0.1, gate_couple_iters=1,
                  gate_tied=False, gate_tie_weight=0.7, episode_shift=None, shift_sigma="learn",
-                 rate_half_life=None, neighbor_adjust=False):
+                 rate_half_life=None, neighbor_adjust=False, size_split=False,
+                 split_long_only=False):
         self.cfg = dict(a=a, b=b, p_change=p_change, step=step, tau_min=tau_min, half_life=None)
         self.rate_half_life = rate_half_life
         self.ST = G.structures(max_lag, xor_order, and_pairs, and_max_lag)
@@ -94,7 +101,8 @@ class Model:
         self.cell_prior, self.relearn, self.p_change_short = cell_prior, relearn, p_change_short
         self.cell_group = cell_group
         self.episode_shift, self.shift_sigma = episode_shift, shift_sigma
-        self.neighbor_adjust = neighbor_adjust
+        self.neighbor_adjust, self.size_split = neighbor_adjust, size_split
+        self.split_long_only = split_long_only
         self.cellpriors = None if cell_prior in (None, "learn") else {(): tuple(cell_prior)}
         if sizes == "gate":
             self.sizes = GateSizes(max_lag=gate_max_lag, strength=gate_strength, p_none=gate_p_none,
@@ -132,6 +140,8 @@ class Model:
         self.sprior = self._finish_prior(p)
         if self.cell_prior == "learn":
             self.cellpriors = G.fit_cell_priors(q, seq, self.ST, self.sprior, self.cfg, self.cell_group)
+        if self.size_split:
+            self._add_splits(q, seq)
         if self.relearn and self.cellpriors is not None:
             p = G.learn_structure_prior(q, seq, self.ST, self.cfg["a"], self.cfg["b"], self.cfg["p_change"],
                                         tau_min=self.cfg["tau_min"], cellprior=self.cellpriors[()])
@@ -150,9 +160,40 @@ class Model:
         self.sizes.fit(q, seq)
         return self
 
+    def _add_splits(self, q, seq):
+        """Add size-split variants ("xs") of every kept XOR pair and re-learn the structure prior over plain +
+        split structures under the learned per-type cell priors (flip times marginalized, train only)."""
+        pairs = [st for f, st in self.ST if f == "xor" and len(st) == 2]
+        mode = self.size_split if isinstance(self.size_split, str) else "small"
+        if mode in ("small", "both"):
+            ks = (lambda i, j: (i,)) if mode == "small" else (lambda i, j: (i, j))
+            self.ST = self.ST + [("xs", (i, j, k)) for i, j in pairs for k in ks(i, j)]
+        if mode in ("tied", "tied+free"):
+            self.ST = self.ST + [("xst", (i, j, i, c)) for i, j in pairs for c in range(3)]
+        if mode == "tied+free":
+            self.ST = self.ST + [("xs", (i, j, i)) for i, j in pairs]
+        acc = [0.0] * (len(self.ST) + 1)
+        for r in q:
+            cfg = self._mcfg(seq[r["machine_id"]], step=4, r_type=r["machine_type"])
+            taus, lp = G._taus(r["cutoff"], cfg["p_change"], cfg["step"], cfg["tau_min"])
+            tb = G.machine_tables(seq[r["machine_id"]], r["cutoff"], taus, self.ST, cfg["a"], cfg["b"],
+                                  self._cp(r), cfg["half_life"])
+            l = [G.logsumexp([ll + x for (ll, _), x in zip(rows, lp)]) for rows in tb]; z = G.logsumexp(l)
+            for i, x in enumerate(l):
+                acc[i] += math.exp(x - z)
+        self.split_raw_prior = [x / sum(acc) for x in acc]
+        self.sprior = self._finish_prior(list(self.split_raw_prior))
+
+    def _sp(self, s):
+        """Structure prior for this machine: split structures dropped for short logs if split_long_only."""
+        if not (self.size_split and self.split_long_only and is_short(s)):
+            return self.sprior
+        p = [0.0 if i < len(self.ST) and self.ST[i][0] in ("xs", "xst") else x for i, x in enumerate(self.sprior)]
+        z = sum(p); return [x / z for x in p]
+
     def _mcfg(self, s, step=None, r_type=None):
         cfg = dict(self.cfg)
-        if self.p_change_short is not None and is_short(s):
+        if isinstance(self.p_change_short, float) and is_short(s):
             cfg["p_change"] = self.p_change_short
         if step is not None:
             cfg["step"] = max(step, cfg["step"])
@@ -164,7 +205,7 @@ class Model:
     def _grid(self, r, s, mode, step=None):
         cp = self._cp(r)
         cps = [G.shift_cellprior(cp, d, mode) for d in SHIFT_GRID]
-        return G.win_probability_grid(r, s, self.ST, self.sprior, cps, **self._mcfg(s, step, r["machine_type"]))
+        return G.win_probability_grid(r, s, self.ST, self._sp(s), cps, **self._mcfg(s, step, r["machine_type"]))
 
     def _fit_shift(self, q, seq):
         """Pick (mode, sigma) maximizing sum over train episodes of log sum_delta prior(delta) prod_m evidence_m."""
@@ -208,7 +249,8 @@ class Model:
                 for r, g in zip(rs, grids):
                     out[r["query_id"]] = sum(w * p for w, (p, _) in zip(post, g))
             return out
-        return {r["query_id"]: G.win_probability(r, seq[r["machine_id"]], self.ST, self.sprior, cellprior=self._cp(r),
+        return {r["query_id"]: G.win_probability(r, seq[r["machine_id"]], self.ST, self._sp(seq[r["machine_id"]]),
+                                                 cellprior=self._cp(r),
                                                  **self._mcfg(seq[r["machine_id"]], r_type=r["machine_type"]))
                 for r in q}
 

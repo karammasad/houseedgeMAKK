@@ -10,6 +10,10 @@ python -m common.evaluate --method adi --data data/main --kwargs '{"max_lag": 12
 Standard library only. Settings are described in `model.py`. With default settings it is identical to
 `method1_gate` (tuning 55.054).
 
+**Best known (round 4):** method2_sizes `round2.FINAL` with `"size_split": true` added to its adi win_kwargs:
+tuning 58.080 / audit 57.832 / full 57.960 on top of the joint-EM FINAL (57.901 / 57.665 / 57.787), keep-check
+KEEP. See FINDINGS "Round 4".
+
 **Heads-up: `method2_sizes` (the uploaded main entry, CSV d39f5332...) uses this package as its win model
 (`win_model="adi"`).** Any change here must keep existing settings byte-identical. Check with:
 `python -c` rebuild of `method2_sizes.round2.FINAL` -> SHA-256 must stay d39f5332... (verified after the round-3
