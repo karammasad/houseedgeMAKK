@@ -308,3 +308,28 @@ keepcheck vs FINAL: KEEP (P(better) = 0.992, 4/4 conditions). It beats the 770-t
 validation with 6 numbers, refits itself in round 2 (no offline export), and is standard library only.
 Recommended entry: `python -m adi.make_entry --method adi.sizewin --data data/main --out <dir>`; files in
 adi/out/main_entry/.
+
+## Rounds 8-10: research-driven attempts to beat round 7 (none adopted)
+
+Research consulted: stacked generalization (Wolpert 1992; Ting & Witten 1997/1999: feed the meta-learner the base
+model's probabilities, low-capacity regularized logistic, out-of-sample rows); simultaneous changepoints across
+sequences (BASIC, Fan & Mackey 2015; panel most-recent-changepoint); bivariate empirical Bayes (Koenker & Gu,
+REBayes B2mix); linear pooling for quadratic scores (Neyman & Roughgarden 2021; Ranjan & Gneiting 2010).
+
+Baseline: adi.sizewin (round 7) tuning 58.221 / audit 58.211 / full 58.214.
+
+| attempt (setting) | tuning | audit / full | verdict |
+| --- | --- | --- | --- |
+| R8 stacker + gate posterior + neighbour flips (`adi.stackr`, default groups) | 58.224 | | no gain |
+| R8b + old-vs-recent win rate (`groups: size, rate`) | 58.343 | 58.078 / 58.215 | REVERT (P=0.51): tuning gain was noise |
+| R8c + multi-window drift (`mrate`) | 58.293 | | worse |
+| R8d/e trained on train+val+test histories, K16 | 58.242 / 58.260 | | worse |
+| R8f + within-cell drift (`cdrift`) | 58.282 | | no gain |
+| R9 correlated on/off "hotness" prior (`machine_shift`, sigma 0.2 by train evidence, +10.6 log-ev) in FINAL | 58.155 | | no gain (helps short, hurts long) |
+| R9b same, short logs only, on sizewin | 58.241 | | +0.02, noise level |
+| R10 linear pool 50/50 sizewin + stack (`adi.blend`) | 58.276 | 58.223 / 58.249 | REVERT: +0.035, P=0.867, 4/4 better, 321 s |
+
+Takeaways: the gate posterior already captures what a linear meta-learner can use; the remaining error is
+per-machine rate noise near the binomial floor (true P(win) would give ~59.6). The on/off correlation seen in raw
+rates is mostly explained by signal and size state, which are already modelled. The blend is the only consistent
+(4/4) gain, but it's small. **Recommended entry unchanged: adi.sizewin (adi/out/main_entry, CSV 1ddc8832).**

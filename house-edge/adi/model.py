@@ -32,6 +32,8 @@ Settings
                cell priors (round 4)
   cell_signal  with cell_prior="learn": per machine type, on/off prior means get a learned log-odds slope in
                `signal` (hierarchical; strengths shared within the type), fitted on train evidence (round 5)
+  machine_shift  True or "short" (short logs only; sigma learned on short train logs): per-machine latent hotness shifting both on/off prior means together (correlated prior); its
+               spread is learned on train evidence (round 9)
   split_long_only  with size_split: use split structures only for long logs (short logs keep plain pairs)
   sizes        "npmle" (default, = method 1), "dirichlet", or "gate" (method2_sizes.GateSizes, imported as-is)
   gate_*       passed to GateSizes when sizes="gate": gate_max_lag, gate_strength, gate_p_none,
@@ -95,7 +97,7 @@ class Model:
                  gate_couple=False, gate_couple_alpha=5.0, gate_couple_mix=0.1, gate_couple_iters=1,
                  gate_tied=False, gate_tie_weight=0.7, episode_shift=None, shift_sigma="learn",
                  rate_half_life=None, neighbor_adjust=False, size_split=False,
-                 split_long_only=False, cell_signal=False):
+                 split_long_only=False, cell_signal=False, machine_shift=False):
         self.cfg = dict(a=a, b=b, p_change=p_change, step=step, tau_min=tau_min, half_life=None)
         self.rate_half_life = rate_half_life
         self.ST = G.structures(max_lag, xor_order, and_pairs, and_max_lag)
@@ -105,6 +107,7 @@ class Model:
         self.episode_shift, self.shift_sigma = episode_shift, shift_sigma
         self.neighbor_adjust, self.size_split = neighbor_adjust, size_split
         self.split_long_only, self.cell_signal = split_long_only, cell_signal
+        self.machine_shift = machine_shift
         self.cellpriors = None if cell_prior in (None, "learn") else {(): tuple(cell_prior)}
         if sizes == "gate":
             self.sizes = GateSizes(max_lag=gate_max_lag, strength=gate_strength, p_none=gate_p_none,
@@ -166,8 +169,22 @@ class Model:
             self._fit_shift(q, seq)
         if self.neighbor_adjust:
             self._fit_neighbor(pub, q, seq)
+        if self.machine_shift:
+            self._fit_machine_shift(q, seq)
         self.sizes.fit(q, seq)
         return self
+
+    def _fit_machine_shift(self, q, seq):
+        """Round 9: correlated on/off prior. Each machine gets a latent 'hotness' delta that shifts BOTH cell-prior
+        means on the log-odds scale (train machines: corr(on, off) +0.41..+0.54 within type). delta ~ N(0, sigma^2)
+        on SHIFT_GRID; sigma picked from SIGMA_GRID by the summed train log-evidence (sigma 0 = off)."""
+        qq = [r for r in q if self.machine_shift != "short" or is_short(seq[r["machine_id"]])]
+        ev = [[z for _, z in self._grid(r, seq[r["machine_id"]], "both", step=4)] for r in qq]
+        self.mshift_table = {}
+        for sg in SIGMA_GRID:
+            lp = shift_logprior(sg)
+            self.mshift_table[sg] = sum(G.logsumexp([a + b for a, b in zip(lp, e)]) for e in ev)
+        self.mshift_sigma = max(SIGMA_GRID, key=self.mshift_table.get)
 
     def _add_splits(self, q, seq):
         """Add size-split variants ("xs") of every kept XOR pair and re-learn the structure prior over plain +
@@ -259,6 +276,18 @@ class Model:
                 zz = G.logsumexp(post); post = [math.exp(x - zz) for x in post]
                 for r, g in zip(rs, grids):
                     out[r["query_id"]] = sum(w * p for w, (p, _) in zip(post, g))
+            return out
+        if self.machine_shift and self.mshift_sigma > 0:
+            lp = shift_logprior(self.mshift_sigma); out = {}
+            for r in q:
+                s_ = seq[r["machine_id"]]
+                if self.machine_shift == "short" and not is_short(s_):
+                    out[r["query_id"]] = G.win_probability(r, s_, self.ST, self._sp(s_), cellprior=self._cp(r),
+                                                           **self._mcfg(s_, r_type=r["machine_type"]))
+                    continue
+                g = self._grid(r, s_, "both")
+                post = [a + z for a, (_, z) in zip(lp, g)]; zz = G.logsumexp(post)
+                out[r["query_id"]] = sum(math.exp(x - zz) * p for x, (p, _) in zip(post, g))
             return out
         return {r["query_id"]: G.win_probability(r, seq[r["machine_id"]], self.ST, self._sp(seq[r["machine_id"]]),
                                                  cellprior=self._cp(r),
