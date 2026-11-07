@@ -19,6 +19,7 @@ import importlib
 from common.data import load_split
 from method1_gate.model import Model as GateModel
 from method2_sizes.sizes import NPMLESizes, DirichletSizes, LagSizes, MinkaSizes, GateSizes
+from method2_sizes.twolag import TwoLagSizes
 
 
 class Model(GateModel):
@@ -48,6 +49,7 @@ class Model(GateModel):
                  gate_couple=False, gate_couple_alpha=5.0, gate_couple_mix=0.1, gate_couple_iters=1,
                  gate_tied=False, gate_tie_weight=0.7, gate_joint_em=False, gate_joint_iters=30,
                  gate_learn_direction=False, gate_direction_strength=20.0,
+                 twolag=None, twolag_pairs="m1", twolag_eps=0.2,
                  win_model=None, win_kwargs=None, **kw):
         self.win_model, self.win_kwargs = win_model, dict(win_kwargs or {})
         base_kind = {"dirichlet": "dirichlet", "minka": "minka"}.get(sizes, "npmle")
@@ -68,3 +70,7 @@ class Model(GateModel):
                                    learn_direction=gate_learn_direction, direction_strength=gate_direction_strength)
         elif sizes not in ("npmle", "dirichlet", "minka"):
             raise ValueError(f"unknown sizes option {sizes!r}")
+        if twolag:   # experiment 8: sparse two-lag expert ("alone" or Bayesian "mix" with GateSizes)
+            if sizes != "gate":
+                raise ValueError("twolag needs sizes='gate'")
+            self.sizes = TwoLagSizes(self.sizes, mode=twolag, pairs=twolag_pairs, eps=twolag_eps)

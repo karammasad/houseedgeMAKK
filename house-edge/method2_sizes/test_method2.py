@@ -62,6 +62,16 @@ class TestGateSizes(unittest.TestCase):
         ll = [x["loglik"] for x in self.base.joint_trace]
         self.assertTrue(all(b >= a - 1e-6 for a, b in zip(ll, ll[1:])), ll)
 
+    def test_twolag_mixture_valid_and_bounded(self):
+        from method2_sizes.twolag import TwoLagSizes, MAPS, PAIRS
+        self.assertEqual((len(PAIRS), len(MAPS)), (28, 10))
+        tl = TwoLagSizes(_model(), mode="mix", pairs="uniform").fit(self.q, self.seq)
+        self.assertTrue(.01 <= tl.v <= .99)
+        for r in self.q:
+            p = tl.predict(r, self.seq[r["machine_id"]])
+            self.assertTrue(all(x >= 0 for x in p)); self.assertAlmostEqual(sum(p), 1.0, places=12)
+            w = tl.weight_new(r, self.seq[r["machine_id"]]); self.assertTrue(0 <= w <= 1)
+
     def test_deterministic_refit(self):
         again = _model(learn_direction=True).fit(self.q, self.seq)
         self.assertEqual(self._preds(again), self._preds(self.dirm))

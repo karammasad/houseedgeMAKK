@@ -1,5 +1,44 @@
 # Method 2 findings: payout sizes given a win
 
+## Experiment 8: sparse two-lag size expert (REJECTED on tuning; does not change the final model)
+
+Note: evaluated against the joint-EM final (57.787) with adi's C5 gate fixed. Meanwhile Adi promoted adi's
+size-split win gate in FINAL (Update 5, full 57.960). The two-lag result is about the SIZE model, which is the
+same in both, so the rejection carries over.
+
+**Research adapted:** conditional tensor factorization (Sarkar & Dunson 2016: each lag's categories map to a few
+latent classes, which gives sparse lag selection), Bayesian context trees / context-tree weighting (exact Bayesian
+averaging over context structures instead of picking one). Implemented as `twolag.py`: the 2 x 2 context
+(big vs not at lags a, b) is mapped to the two learned levels by one of the 10 maps that use both lags.
+Exact evidence over 28 pairs x 10 maps. Pair prior is guided by method 1's win posterior (eps = .2 uniform).
+Missing lag -> 50/50 state. Bayesian mixture with the existing GateSizes expert (prior weight v by EM on train).
+
+**Phase 1 (diagnostics, `twolag_probe.py`):** oracle with true sizes 58.270 vs 57.901 tuning (+.37 max for ANY
+size model); true STATE alone 58.257, so levels are right and only the state is uncertain. True WIN prob 59.591
+(+1.69). Short-history state is wrong 26% but confidently wrong only 3%, so the error is scarce data, not
+missing structure. Train residual test, second lag given the confident first lag: excess deviance -281 vs a
+shuffled lag, i.e. no interaction.
+
+**Synthetic recovery (`twolag_synth.py`):** planted two-lag XOR -> v = .99 and the exact pair is recovered on
+59% of long machines; planted one-lag -> v = .01. The expert detects the mechanism when it exists.
+
+**Phase 3 (`twolag_eval.py`, tuning half, adi gate fixed):**
+
+| variant | tuning | vs A | stable | short | drift | shared | v | post. mass |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| A joint-EM GateSizes (final) | 57.901 | — | .0370 | .0543 | .0341 | .0197 | — | — |
+| B two-lag alone (m1 pairs) | 56.700 | -1.201 | .0517 | .0854 | .0471 | .0486 | — | 1.00 |
+| C mixture, m1 pairs | 57.878 | -0.023 | .0370 | .0544 | .0341 | .0212 | .010 | .009 |
+| D mixture, m1 top pairs only | 57.874 | -0.027 | .0370 | .0544 | .0341 | .0215 | .010 | .009 |
+| E mixture, uniform pairs | 57.898 | -0.003 | .0370 | .0544 | .0341 | .0198 | .010 | .007 |
+
+P(1x|win) error by observed wins (<20/20-40/40-80/80+): A .081/.050/.027/.010; best mixture E
+.082/.051/.028/.011. EM sends the new expert's weight to its floor on real data, matching the planted one-lag
+synthetic case. Peak memory 38 MiB; mixture size fit + predict 64-88 s (vs 27 s).
+Predeclared rule (audit only if tuning gain >= .15): not met, so no audit was run. **Conclusion:** sizes follow a
+single-lag two-state gate; the remaining error is data scarcity (+.37 ceiling). The real headroom (+1.69) is the
+WIN side (cf. adi round 4's size-split gate, 58.08).
+
 ## Experiment 7: learned direction / constant-state priors (REVERTED; final stays joint EM 57.787)
 
 **Question asked:** learn the tied-cell partition prior by empirical Bayes. **It already was:** joint EM fits rho
