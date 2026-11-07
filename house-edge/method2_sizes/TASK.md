@@ -43,3 +43,7 @@ To measure size changes alone, keep the gate fixed (same Model settings) and cha
 - EXPERIMENT 7 (reverted): learned direction / constant-state priors (`gate_learn_direction`). Full 57.790 vs
   57.787, bootstrap P=.83 → not adopted. Final stays joint EM (SHA 450755db). Unit tests:
   `python -m unittest method2_sizes.test_method2`.
+- UPDATE 5 (made by Adi, at Adi's request): adi's size-split win gate (`"size_split": True` in `ADI`, adi round 4:
+  the win rate depends on the hidden size state). Keep check vs previous final: tuning 58.080 (+0.179), audit
+  57.832 (+0.167), full 57.960 (+0.173), 4/4 conditions, bootstrap P=1.000. Unit tests pass. Upload files
+  rebuilt in out/main_entry/ (SHA e2686e96). Details: adi/FINDINGS.md "Round 4".

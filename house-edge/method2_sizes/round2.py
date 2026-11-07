@@ -16,7 +16,8 @@ from common.data import public_dir, write_predictions
 from common.evaluate import folds, points, CONDITIONS
 
 ADI = {"max_lag": 12, "and_pairs": True, "prior_flips": True, "prune": 0.01, "floor": 0.05,
-       "cell_prior": "learn", "cell_group": "type", "p_change_short": "learn"}
+       "cell_prior": "learn", "cell_group": "type", "p_change_short": "learn",
+       "size_split": True}  # adi round 4 (0834904): keepcheck KEEP, full 57.787 -> 57.960, P(better)=1.000
 FINAL = dict(sizes="gate", gate_cell_prior="npmle", gate_couple=True, gate_couple_iters=20, gate_tied=True,
              gate_tie_weight="learn", gate_joint_em=True, win_model="adi", win_kwargs=ADI)
 
