@@ -10,6 +10,27 @@ Gradient learners can't discover parities from raw inputs (Shalev-Shwartz et al.
 - `model.py`: scikit-learn HistGradientBoostingClassifier on train-history ticks (subsampled to 150k).
   Score: 48.60 tuning (Method 1: 55.05). Needs `pip install scikit-learn`; cannot ship yet (see AGENTS.md rule 4).
 
+## v2 (current, model.py) - tuning 55.45, audit 55.26 (Method 1: 55.05 / 54.79)
+- `model.py`: GBM stacker. P(win) = 0.8 * GBM + 0.2 * Method 1. GBM features (`features2.py`): Method 1 posterior
+  summaries at tick t (P(win), P(win|no change), P(change), P(no gate), top-structure mass, change recency),
+  the other episode machines' change signals at t, lag wins 1..8, recent win rates. Training ticks: K=24 per
+  episode from train + validation/test HISTORIES, plus K_short=24 per long episode with the past masked like
+  short_history (40 recent + 24 older ticks). Sizes: `size_hmm.py` (two-state size HMM, EM on train).
+- Tuning ratios: stable 0.075, short 0.111, drift 0.087, shared 0.055 (M1: 0.074, 0.131, 0.090, 0.065).
+- Runtime: ~150 s fit+test on 8 cores (features in a process pool); about 4x that on 2 cores. Deterministic.
+- Old baseline: `--kwargs '{"variant":"v1"}'` (48.60). Sweeps: `python -m method4_ml.sweep --grid '{...}'`.
+- Flat (within 0.15, not adopted): GBM grid lr/leaves/min_leaf/l2, K 48, K_short 48, sizes=mix/npmle, size EM on all splits.
+
+## Data findings (method4_ml/analysis/, validation targets read for ANALYSIS ONLY)
+- True size distribution given a win takes exactly TWO values per machine type (all 768 validation queries),
+  differing mainly in the 1x/2x split; independent of signal, of the win state and of the gate cell.
+- That state is only weakly identifiable from history: even with the true distributions and a confident history
+  posterior (>0.95), it matches the cutoff state ~77%. Recent wins predict no better than old ones; no lag,
+  XOR pair or neighbour explains it. Treat as hidden per-spin noise; EM-learned blurred emissions ~ optimal.
+- Error split (Method 1): true P(win) alone -> 57.2, true sizes alone -> 57.6, but the size gain is mostly
+  unreachable (see above). Remaining reachable headroom is in the win model, especially short histories.
+- True P(win) is bimodal (logit mostly -5..-2 and 1..3), consistent with gated cells plus drift.
+
 ## Do, in order
 1. D2 Better polarity features: agreement over several windows (20, 40, 80), agreement with the NEGATED XOR,
    time since the agreement last switched sign. Keep if tuning improves by >= 0.15.
