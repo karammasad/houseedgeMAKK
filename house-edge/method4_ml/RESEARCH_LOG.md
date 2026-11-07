@@ -63,7 +63,10 @@ Each: mechanism -> evidence -> falsifier -> result. Gains are vs the stated base
 | 23 | The episode's condition (stable / drift / shared) is identifiable from histories alone (B: regimes) | P(H_shared) per condition, no labels | CONFIRMED as a finding: mean P(H_shared) = 1.000 (shared), 0.002 (drift), 0.000 (stable) on validation. NOT exploitable here: each machine's own posterior already says whether and when it flipped (only 7 of 768 validation machines are ambiguous). Possibly useful if round 2 changes the flip structure. |
 | 24 | RETRACTION | first run of #21 used hand-counted column indices that were off by 3 | Every term was built from the wrong columns (adi's correction scored BELOW the gate alone, contradicting adi's 58.214); `check_layout()` now asserts the layout, results above are from the fixed run. |
 
-Eliminated classes: change-model shape (4, 5, 6, 7), cross-machine information (10, 11), richer population priors (8, 9),
+| 25 | Product-of-marginals bias: win rate and size share depend on the SAME hidden size state, so E[pw * s_i] != E[pw] E[s_i] (objective-aligned decomposition, mine) | regress class residuals on the covariance term (pw dev x s_i dev) per type; in-sample upper bound (`analysis/covariance_test.py`) | FALSIFIED as a score source: slopes ~0 for 1x/2x/5x (R^2 <= .05), -0.4..-0.6 only for the tiny 20x class; optimistic in-sample bound 58.249 -> 58.263 (+0.014). |
+| 26 | Round-2 risk: a stacker tuned on round 1 may not generalize to a new mechanism (J/F: distribution-aware) | `round2.py`: one fit, four variants, choose on the new round's TUNING half with a margin over 'gate only' | BUILT + rehearsed on main data (picks v7; 47 s cached). Guards against a stacker that stops helping; prints learned structures with flags. |
+
+Eliminated classes (also: factorization bias, shared-tau pooling, raw-history sequence models): change-model shape (4, 5, 6, 7), cross-machine information (10, 11), richer population priors (8, 9),
 more learner capacity / data / objective tweaks (3, 12, 13, 15).
 
 ## Remaining unexplained error and highest-value next hypothesis
@@ -74,3 +77,10 @@ more learner capacity / data / objective tweaks (3, 12, 13, 15).
 - Best use of remaining effort: round 2 (a refit on new mechanisms), not more main-round search.
 - Round 2 changes "which temporal relationships recur": v5 learns everything in fit() (structures, cell priors, signal betas,
   size model, stacker), so nothing above is hard-coded.
+
+## Round-2 procedure (method4)
+1. `python -m method4_ml.round2 --data data/adaptation --out build/round2 --no-cache` (about 15 min on 2 cores, ~5 on 8).
+2. Read FLAGS and the variant table. The chosen variant is written to `build/round2/chosen.json`.
+3. Package: `python -m method4_ml.make_entry --data data/adaptation --out build/adapt_m4 --kwargs "$(cat build/round2/chosen.json)"`
+   (chosen.json holds blend / lr_weight; the ZIP refits on the runner, so check its CSV equals build/round2/submission.csv).
+4. If scikit-learn is not allowed on the runner, ship adi.sizewin (stdlib only, 58.214 full) or the numpy-free parts of this model.
