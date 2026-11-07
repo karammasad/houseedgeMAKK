@@ -1,16 +1,13 @@
-"""Method 4 v3: gradient-boosted stacker on top of the team's best gate + size models. Owner: Person D.
+"""Method 4 v5: gradient-boosted stacker on the team's best gate + size models. Owner: Person D.
 
-Win probability: HistGradientBoostingClassifier on features3 (summaries of adi's change-point gate for this
-machine, the other episode machines' flip signals, lag/rate features). Training examples: K random observed
-history ticks per episode from train plus the HISTORIES of validation/test (allowed: histories only), plus
-K_short copies per long episode with the past masked like the short_history condition (40 recent + 24 older
-ticks). Every feature for tick t uses ticks < t only. P(win) = blend * GBM + (1 - blend) * gate.
-Sizes given a win: method2_sizes.GateSizes (couple + tied) via the adi model, or "hmm" (size_hmm.py),
-or the average of both ("mix"). Everything is learned in fit() from pub/train (+ histories); nothing hardcoded.
-
-Settings: K, K_short, t_min, splits, lr, max_leaf_nodes, min_samples_leaf, l2, max_iter, seeds, blend, sizes,
-gate (kwargs for adi.model.Model), workers, cache. variant="v1" runs the old baseline (baseline.py).
-Needs scikit-learn.
+Win probability: adi's change-point gate (size-split structures) with SIGNAL-SHIFTED cell priors (signal_shift.py), plus a
+HistGradientBoostingClassifier on features3 (gate posterior summaries, the other episode machines' flip signals, lag/rate
+features, and the size model's P(1x|win) = hidden size state). Training examples: K random observed history ticks per episode
+from train plus the HISTORIES of validation/test (allowed: histories only), plus K_short copies per long episode with the past
+masked like short_history (40 recent + 24 older ticks). Every feature for tick t uses ticks < t only.
+P(win) = blend * GBM + (1 - blend) * gate. Sizes given a win: method2_sizes.GateSizes with Momin's FINAL settings (SIZES).
+Everything is learned in fit() from pub/train (+ histories); nothing hardcoded. Needs scikit-learn.
+variant="v1" runs the old baseline (baseline.py).
 """
 import hashlib, json, os, pickle, random
 from collections import defaultdict
@@ -19,15 +16,16 @@ from common.data import load_split, wins
 from adi.model import Model as AdiModel
 from method2_sizes.sizes import GateSizes
 from method4_ml.pooled import pooled_split
-from method4_ml.features3 import episode_examples, CELL_N
+from method4_ml.signal_shift import attach_signal_shift
+from method4_ml.features3 import episode_examples
 from method4_ml.size_hmm import SizeHMM
 
-FEATURE_VERSION = "f3.2"
+FEATURE_VERSION = "f3.5"
 HERE = os.path.dirname(os.path.abspath(__file__))
 # adi's win-gate configuration (adi/FINDINGS.md): wide pruned family, learned cell priors. Its built-in sizes are only a
 # cheap placeholder here: the real size model is SIZES below, fit separately (optionally on every split's histories).
 GATE = {"max_lag": 12, "and_pairs": True, "prior_flips": True, "prune": 0.01, "floor": 0.05, "cell_prior": "learn",
-        "cell_group": "type", "p_change_short": "learn", "sizes": "npmle"}
+        "cell_group": "type", "p_change_short": "learn", "sizes": "npmle", "size_split": True}
 # method2_sizes.GateSizes, Momin's FINAL (method2_sizes/round2.py): coupling to the win gate, two-state ("tied") size
 # gate with a learned tie weight, joint empirical-Bayes EM.
 SIZES = dict(max_lag=8, strength=4.0, p_none=0.3, learn_prior=True, cell_prior="npmle", couple=True, couple_alpha=5.0,
@@ -35,13 +33,13 @@ SIZES = dict(max_lag=8, strength=4.0, p_none=0.3, learn_prior=True, cell_prior="
 _G = {}
 
 
-def _init(gm):
-    _G["gm"] = gm
+def _init(gm, sz):
+    _G["gm"], _G["sz"] = gm, sz
 
 
 def _episode_job(args):
     machines, seq, ticks = args
-    return episode_examples(machines, seq, ticks, _G["gm"])
+    return episode_examples(machines, seq, ticks, _G["gm"], _G["sz"])
 
 
 def _seed(*parts):
@@ -76,8 +74,8 @@ class GateInit:
 
 
 class Model:
-    def __init__(self, variant="v3", stack="hgb", n_estimators=150, max_depth=3, subsample=0.8, cells=False, K=24, K_short=24, t_min=100, splits="all", lr=0.03, max_leaf_nodes=15,
-                 min_samples_leaf=1000, l2=1.0, max_iter=400, seeds=3, blend=0.4, sizes="gate", gate=None, size_kw=None, size_pool="train",
+    def __init__(self, variant="v3", stack="hgb", n_estimators=150, max_depth=3, subsample=0.8, K=6, K_short=6, t_min=100, splits="all", lr=0.03, max_leaf_nodes=15,
+                 min_samples_leaf=1000, l2=1.0, max_iter=400, seeds=3, blend=0.4, sizes="gate", gate=None, size_kw=None, size_pool="train", signal_shift=True, size_feat=True, size_stack=False, size_blend=0.5,
                  workers=None, cache=True, **v1kw):
         self.variant = variant
         if variant == "v1":
@@ -87,8 +85,9 @@ class Model:
         self.gbm = dict(learning_rate=lr, max_leaf_nodes=max_leaf_nodes, min_samples_leaf=min_samples_leaf,
                         l2_regularization=l2, max_iter=max_iter, early_stopping=True, validation_fraction=0.1,
                         n_iter_no_change=30)
-        self.seeds, self.blend, self.sizes_kind = seeds, blend, sizes
-        self.stack, self.cells = stack, cells
+        self.seeds, self.blend, self.sizes_kind, self.signal_shift = seeds, blend, sizes, signal_shift
+        self.size_feat, self.size_stack, self.size_blend = size_feat, size_stack, size_blend
+        self.stack = stack
         self.og = dict(learning_rate=lr, n_estimators=n_estimators, max_depth=max_depth, subsample=subsample,
                        min_samples_leaf=min_samples_leaf, max_features=0.7)
         self.gate_kw = dict(GATE if gate is None else gate)
@@ -97,16 +96,18 @@ class Model:
 
     # ---------- gate model (fit on train, cached) ----------
     def _fit_gate(self, pub):
-        path = _cache_path("gate", os.path.abspath(pub), json.dumps(self.gate_kw, sort_keys=True), FEATURE_VERSION)
+        path = _cache_path("gate", os.path.abspath(pub), json.dumps(self.gate_kw, sort_keys=True), self.signal_shift, FEATURE_VERSION)
         gm = _load(path) if self.cache else None
         if gm is None:
             gm = AdiModel(**self.gate_kw).fit(pub)
+            if self.signal_shift:      # signal-dependent cell priors, learned by marginal likelihood on train histories
+                attach_signal_shift(gm, *pooled_split(pub, ("train",)))
             if self.cache:
                 _save(path, gm)
         return gm
 
     def _fit_sizes(self, pub, gm):
-        path = _cache_path("sizes", os.path.abspath(pub), json.dumps(self.gate_kw, sort_keys=True),
+        path = _cache_path("sizes", os.path.abspath(pub), json.dumps(self.gate_kw, sort_keys=True), self.signal_shift,
                            json.dumps(self.size_kw, sort_keys=True), self.size_pool, FEATURE_VERSION)
         g = _load(path) if self.cache else None
         if g is None:
@@ -119,7 +120,8 @@ class Model:
     # ---------- features (cached) ----------
     def _features(self, pub, split, queries=False):
         path = _cache_path(os.path.abspath(pub), split, queries, self.K, self.K_short, self.t_min,
-                           json.dumps(self.gate_kw, sort_keys=True), FEATURE_VERSION)
+                           json.dumps(self.gate_kw, sort_keys=True), self.signal_shift, self.size_feat,
+                           json.dumps(self.size_kw, sort_keys=True), FEATURE_VERSION)
         hit = _load(path) if self.cache else None
         if hit is not None:
             return hit
@@ -142,7 +144,7 @@ class Model:
                         keep = set(range(t - 40, t + 1)) | set(rng.sample(range(t - 40), 24))
                         msub[mid] = [x if i in keep else -1 for i, x in enumerate(v[:t + 1])]
                     jobs.append((ms, msub, [t]))
-        with get_context("fork").Pool(self.workers, _init, (self.gm,)) as pool:
+        with get_context("fork").Pool(self.workers, _init, (self.gm, self.size_models.get("gate") if self.size_feat else None)) as pool:
             res = pool.map(_episode_job, jobs, chunksize=1)
         X, y, ids = [], [], []
         for (ms, sub, ticks), feats in zip(jobs, res):
@@ -152,7 +154,7 @@ class Model:
                     if queries:
                         X.append(feats[(r["machine_id"], t)]); ids.append(r["query_id"])
                     elif w[t] >= 0:
-                        X.append(feats[(r["machine_id"], t)]); y.append(w[t])
+                        X.append(feats[(r["machine_id"], t)]); y.append(sub[r["machine_id"]][t])   # payout (0/1/2/5/20)
         out = (X, y, ids)
         if self.cache:
             _save(path, out)
@@ -174,20 +176,23 @@ class Model:
         for s in splits:
             if os.path.exists(os.path.join(pub, s, "history.csv")):
                 a, b, _ = self._features(pub, s); X += a; y += b
-        self.n_train = len(X)
+        self.n_train = len(X); ypay = y; y = [int(v > 0) for v in ypay]
         X = self._sel(X)
         if self.stack == "offset":
             from sklearn.ensemble import GradientBoostingClassifier
             self.clfs = [GradientBoostingClassifier(init=GateInit(), random_state=k, **self.og).fit(X, y) for k in range(self.seeds)]
         else:
             self.clfs = [HistGradientBoostingClassifier(random_state=k, **self.gbm).fit(X, y) for k in range(self.seeds)]
+        self.sclfs = []
+        if self.size_stack:    # P(1x | win) stacker on the same features, winning ticks only
+            wi = [i for i, v in enumerate(ypay) if v > 0]; Xs = X[wi]; ys = [int(ypay[i] == 1) for i in wi]
+            self.sclfs = [HistGradientBoostingClassifier(random_state=k, **self.gbm).fit(Xs, ys) for k in range(self.seeds)]
         return self
 
-    def _sel(self, X):
-        """Feature matrix; cells=False drops the per-structure cell-statistics columns (7 .. 7 + 2*CELL_N)."""
+    @staticmethod
+    def _sel(X):
         import numpy as np
-        X = np.asarray(X, dtype=float)
-        return X if self.cells else np.delete(X, np.s_[7:7 + 2 * CELL_N], axis=1)
+        return np.asarray(X, dtype=float)
 
     def predict(self, pub, split):
         if self.variant == "v1":
@@ -205,8 +210,18 @@ class Model:
             for r in q:
                 s = seq[r["machine_id"]]; sz = [m.predict(r, s) for m in self.size_models.values()]
                 cache[key][r["query_id"]] = [sum(v[i] for v in sz) / len(sz) for i in range(4)]
+        P1 = None
+        if self.sclfs and self.size_blend > 0:
+            P1 = [0.0] * len(X)
+            for c in self.sclfs:
+                for i, p in enumerate(c.predict_proba(X)[:, 1]):
+                    P1[i] += p / len(self.sclfs)
+            P1 = dict(zip(ids, P1))
         out = {}
         for r in q:
-            p = min(max(pw[r["query_id"]], 1e-6), 1 - 1e-6)
-            out[r["query_id"]] = [1 - p] + [p * x for x in cache[key][r["query_id"]]]
+            qid = r["query_id"]; p = min(max(pw[qid], 1e-6), 1 - 1e-6); sz = cache[key][qid]
+            if P1 is not None:      # blend the size stacker into P(1x | win); rescale the big-win split to sum to 1
+                a = (1 - self.size_blend) * sz[0] + self.size_blend * P1[qid]; a = min(max(a, 1e-4), 1 - 1e-4)
+                rest = sum(sz[1:]); sz = [a] + [x * (1 - a) / rest for x in sz[1:]] if rest > 0 else sz
+            out[qid] = [1 - p] + [p * x for x in sz]
         return out

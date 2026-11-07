@@ -10,7 +10,30 @@ Gradient learners can't discover parities from raw inputs (Shalev-Shwartz et al.
 - `model.py`: scikit-learn HistGradientBoostingClassifier on train-history ticks (subsampled to 150k).
   Score: 48.60 tuning (Method 1: 55.05). Needs `pip install scikit-learn`; cannot ship yet (see AGENTS.md rule 4).
 
-## v4 (current, model.py): tuning 57.956, audit 57.768, FULL VALIDATION 57.865 (kit checker: 57.865046 / 60)
+## v5 (current, model.py): tuning 58.236, audit 58.143, FULL VALIDATION 58.190 (kit checker 58.189711 / 60)
+Team best before this (adi size_split + Momin FINAL sizes): 58.080 / 57.832 / 57.960. v5 gain: +0.156 tuning / +0.311 audit
+(passes the 0.15 rule on both halves). v4 was 57.956 / 57.768 / 57.865.
+Pieces:
+1. Win gate: adi's model with `size_split` (round 4: win rate depends on the hidden size state), imported read-only.
+2. NEW, signal-shifted cell priors (`signal_shift.py`): data finding (analysis/onrate_structure.py) - inside (type, size state) the
+   true on-cell win rate shifts with `signal` (jackpot ~+0.09 per step) and its spread drops to sd .08-.11 (vs .164 per type).
+   adi's per-type prior is shifted by (beta_on, beta_off) x signal on the log-odds scale; betas learned per type by marginal
+   likelihood on TRAIN histories (identical choice when learned on all histories): balanced (.3, .2), jackpot (.3, .2),
+   steady (.4, .4); evidence gain 39-94 nats. Gate alone: 58.080 -> 58.156.
+3. Sizes: Momin's FINAL GateSizes (learned tie weight + joint EM), `SIZES` in model.py.
+4. NEW, stacker sees the hidden size state: features3 adds the size model's P(1x|win) at tick t (and its type-centred value),
+   so the GBM learns how the size state moves the win rate. 58.175 -> 58.234.
+5. Stacker: HGB lr .03, 15 leaves, min_samples_leaf 1000, 3 seeds, blend .4; K=6 + K_short=6 ticks per episode (same accuracy
+   as K=24, 4x cheaper features).
+KEEP-CHECK vs team FINAL (method2_sizes round2.FINAL incl. adi size_split + cell_signal), `python -m method2_sizes.keepcheck`:
+  A FINAL: 58.156 / 57.986 / full 58.074; B v5: 58.236 / 58.143 / full 58.190; bootstrap P(B better) .987, 4/4 conditions,
+  none worse, 241 s -> VERDICT KEEP. (adi independently found the same signal slope, +0.30, in round 5.)
+Runtime: fresh fit + test with 2 workers 310 s (organizer limit 30 min); deterministic (cached == fresh, b23618aa). Needs scikit-learn (rule 4). Package with `python -m method4_ml.make_entry`.
+Tried this round, not adopted: size stacker for P(1x|win) (hurts: 58.236 -> 58.196 at weight .6), HGB grid of 72 configs (flat,
+58.17-58.24), K 6/12/24 (flat), pooled histories for sizes (flat), ramp/gradual drift (true rates are discrete even in drift:
+<=4% mid-range), removed the dead per-structure cell-stat features.
+
+## v4 (superseded): tuning 57.956, audit 57.768, FULL VALIDATION 57.865 (kit checker: 57.865046 / 60)
 Base = adi's win gate + Momin's FINAL size model (method2_sizes.GateSizes: couple + tied with LEARNED tie weight + joint EM,
 settings in model.SIZES), both imported read-only. Alone this is Momin's 57.901 tuning (reproduced exactly with blend=0).
 On top: HistGradientBoosting stacker on gate-posterior features (features3.py), lr .03, 15 leaves, min_samples_leaf 1000, 3 seeds,

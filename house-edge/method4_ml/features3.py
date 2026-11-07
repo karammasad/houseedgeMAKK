@@ -7,8 +7,10 @@ query examples use t = cutoff.
 Groups
   gate_*  summaries of a fitted change-point gate model `gm` (adi.model.Model: learned structure prior, learned
           per-type cell priors, short-log flip prior): P(win), P(win | no flip), P(flip), P(no gate), top-2
-          structure masses, expected flip recency.
+          structure masses, expected flip recency (works for plain, AND-family and size-split structures).
   ep_*    the OTHER machines' gate signals at the same t (mean / max P(flip), mean recency, mean win-shift).
+  size_*  (optional) the size model's P(1x | win) for this machine at t and its deviation from the type mean: the
+          hidden size state also moves the win rate (adi round 4), so the GBM can learn that shift.
   base    lag wins 1..8, recent win rates (10/20/40), observed count, missing share of last 40, type, signal.
 """
 import math
@@ -23,7 +25,7 @@ def is_short(seq_trunc):
     return sum(1 for x in seq_trunc if x >= 0) <= SHORT_OBS
 
 
-def gate_summary(seq_trunc, r, gm, cells=True):
+def gate_summary(seq_trunc, r, gm):
     """Gate posterior summaries for predicting tick len(seq_trunc)."""
     cut = len(seq_trunc); cfg = dict(gm.cfg)
     if gm.p_change_short is not None and is_short(seq_trunc):
@@ -47,37 +49,7 @@ def gate_summary(seq_trunc, r, gm, cells=True):
     for w, si in zip(W, SI):
         mass[si] += w
     order = sorted(range(len(tb) - 1), key=lambda i: -mass[i]); top = [mass[i] for i in order] + [0.0, 0.0]
-    out = [pw, pw_nc, p_chg, mass[-1], top[0], top[1], rec / cut]
-    if cells:
-        w = wins(seq_trunc)
-        for i in (order[:2] + [None, None])[:2]:
-            out += cell_stats(w, gm.ST[i]) if i is not None else [-1] * CELL_N
-    return out
-
-
-CELL_WINDOWS = (None, 60, 30)
-CELL_N = 1 + 4 * len(CELL_WINDOWS)
-
-
-def cell_stats(w, st):
-    """Current gate value x_c and, per window (all / last 60 / last 30 observed gate ticks): count and win rate of the
-    cell equal to x_c and of the other cell (smoothed). Lets the GBM learn its own shrinkage / polarity handling."""
-    form, lags = st; cut = len(w)
-    xc = G.gate_value(form, lags, w, cut)
-    ticks = []
-    for t in range(max(lags), cut):
-        if w[t] < 0:
-            continue
-        x = G.gate_value(form, lags, w, t)
-        if x is not None:
-            ticks.append((x, w[t]))
-    out = [-1 if xc is None else xc]
-    for win in CELL_WINDOWS:
-        sub = ticks if win is None else ticks[-win:]
-        for same in (True, False):
-            sel = [y for x, y in sub if xc is not None and ((x == xc) == same)] if xc is not None else [y for x, y in sub if x == (0 if same else 1)]
-            out += [len(sel), (sum(sel) + .5) / (len(sel) + 1)]
-    return out
+    return [pw, pw_nc, p_chg, mass[-1], top[0], top[1], rec / cut]
 
 
 def base_features(seq_trunc):
@@ -90,7 +62,7 @@ def base_features(seq_trunc):
     return f
 
 
-def episode_examples(machines, seq, ticks, gm):
+def episode_examples(machines, seq, ticks, gm, sz=None):
     """machines: query dicts of one episode; ticks: prediction ticks. Returns {(machine_id, t): features}."""
     out = {}
     for t in ticks:
@@ -101,5 +73,8 @@ def episode_examples(machines, seq, ticks, gm):
             ep = [sum(o[2] for o in others) / n, max((o[2] for o in others), default=0),
                   sum(o[6] for o in others) / n, sum(o[0] - o[1] for o in others) / n]
             g = M[mid]; lg = math.log(max(g[0], 1e-6) / max(1 - g[0], 1e-6))
-            out[(mid, t)] = g + [lg] + ep + base_features(seq[mid][:t]) + [TYPES.index(r["machine_type"]), r["signal"]]
+            szf = []
+            if sz is not None:   # size model's P(1x | win) at this tick (hidden size state) and its type-centred version
+                a = sz.predict(r, seq[mid][:t])[0]; szf = [a, a - sz.mu.get(r["machine_type"], a)]
+            out[(mid, t)] = g + [lg] + ep + base_features(seq[mid][:t]) + [TYPES.index(r["machine_type"]), r["signal"]] + szf
     return out
