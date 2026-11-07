@@ -16,6 +16,15 @@ Settings
   relearn      after fitting the cell prior, re-learn the structure prior with the shared cell prior (C5)
   p_change_short  flip-prior weight used for short logs (more than half the ticks missing); None = p_change,
                "learn" = pick from P_CHANGE_GRID by marginal likelihood of the short train logs (C5)
+  episode_shift  None (off), "both" / "on" / "off" / "contrast", or "learn" (pick the mode by train evidence).
+               Each episode gets a shared log-odds shift delta of its machines' on/off cell-prior means,
+               delta ~ discretized N(0, shift_sigma^2) on SHIFT_GRID. P(win) for each machine is averaged over the
+               posterior of delta given every machine's log in the episode (all ticks before the cutoff).
+  shift_sigma  float, or "learn" (pick from SIGMA_GRID by train marginal likelihood over episodes; 0 = no shift)
+  rate_half_life  None, ticks, or {machine_type: ticks}: down-weight old ticks in the gate-cell counts (rates drift slowly). Applied
+               at prediction time to long logs only (it hurts short logs); priors are learned unweighted.
+  neighbor_adjust  add beta * (episode neighbours' recent-minus-long-run win rate over the last W ticks) to
+               P(win); W and beta fitted by least squares on train labels ("hot room" effect)
   sizes        "npmle" (default, = method 1), "dirichlet", or "gate" (method2_sizes.GateSizes, imported as-is)
   gate_*       passed to GateSizes when sizes="gate": gate_max_lag, gate_strength, gate_p_none,
                gate_learn_prior, gate_half_life, gate_cell_prior, gate_couple, gate_couple_alpha, gate_couple_mix,
@@ -24,6 +33,7 @@ Settings
                method-1 win-gate posterior with this model's a/b/p_change/step/tau_min.
 Everything is learned in fit() from pub/train only. Probabilities = [1 - P(win), P(win) * size distribution].
 """
+import csv, math, os
 from common.data import load_split
 from method2_sizes.sizes import NPMLESizes, DirichletSizes, GateSizes  # read-only import of Person B's models
 from method1_gate.gate import learn_structure_prior as m1_prior
@@ -31,6 +41,37 @@ from adi import gate as G
 
 
 P_CHANGE_GRID = (.05, .1, .2, .3, .4, .5, .7)
+SHIFT_GRID = (-1.2, -.9, -.6, -.3, 0.0, .3, .6, .9, 1.2)
+SIGMA_GRID = (0.0, .1, .2, .3, .45, .6, .8)
+SHIFT_MODES = ("both", "on", "off", "contrast")
+NBR_WINDOWS = (5, 10, 20)
+
+
+def neighbor_feature(q, seq, W):
+    """Per query: mean over the other machines in its episode of (win rate over the W ticks before the cutoff
+    minus their win rate before that). Uses only ticks strictly before the cutoff."""
+    eps = {}
+    for r in q:
+        eps.setdefault(r["episode_id"], []).append(r)
+    out = {}
+    for r in q:
+        cut = r["cutoff"]; vals = []
+        for o in eps[r["episode_id"]]:
+            if o["machine_id"] == r["machine_id"]:
+                continue
+            so = seq[o["machine_id"]]
+            rec = [x for x in so[cut - W:cut] if x >= 0]; old = [x for x in so[:cut - W] if x >= 0]
+            if rec and old:
+                vals.append(sum(x > 0 for x in rec) / len(rec) - sum(x > 0 for x in old) / len(old))
+        out[r["query_id"]] = sum(vals) / len(vals) if vals else 0.0
+    return out
+
+
+def shift_logprior(sigma):
+    if sigma <= 0:
+        return [0.0 if d == 0 else -1e300 for d in SHIFT_GRID]
+    l = [-d * d / (2 * sigma * sigma) for d in SHIFT_GRID]; z = G.logsumexp(l)
+    return [x - z for x in l]
 
 
 def is_short(s):
@@ -44,12 +85,16 @@ class Model:
                  p_change_short=None, sizes="npmle", size_strength=30.0, gate_max_lag=8, gate_strength=4.0,
                  gate_p_none=0.3, gate_learn_prior=True, gate_half_life=None, gate_cell_prior="beta",
                  gate_couple=False, gate_couple_alpha=5.0, gate_couple_mix=0.1, gate_couple_iters=1,
-                 gate_tied=False, gate_tie_weight=0.7):
-        self.cfg = dict(a=a, b=b, p_change=p_change, step=step, tau_min=tau_min)
+                 gate_tied=False, gate_tie_weight=0.7, episode_shift=None, shift_sigma="learn",
+                 rate_half_life=None, neighbor_adjust=False):
+        self.cfg = dict(a=a, b=b, p_change=p_change, step=step, tau_min=tau_min, half_life=None)
+        self.rate_half_life = rate_half_life
         self.ST = G.structures(max_lag, xor_order, and_pairs, and_max_lag)
         self.prior_flips, self.prune, self.floor, self.none_floor = prior_flips, prune, floor, none_floor
         self.cell_prior, self.relearn, self.p_change_short = cell_prior, relearn, p_change_short
         self.cell_group = cell_group
+        self.episode_shift, self.shift_sigma = episode_shift, shift_sigma
+        self.neighbor_adjust = neighbor_adjust
         self.cellpriors = None if cell_prior in (None, "learn") else {(): tuple(cell_prior)}
         if sizes == "gate":
             self.sizes = GateSizes(max_lag=gate_max_lag, strength=gate_strength, p_none=gate_p_none,
@@ -98,21 +143,94 @@ class Model:
                 return sum(G.win_probability(r, seq[r["machine_id"]], self.ST, self.sprior, evidence=True,
                                              cellprior=self._cp(r), **cfg)[1] for r in short)
             self.p_change_short = max(P_CHANGE_GRID, key=ev)
+        if self.episode_shift is not None:
+            self._fit_shift(q, seq)
+        if self.neighbor_adjust:
+            self._fit_neighbor(pub, q, seq)
         self.sizes.fit(q, seq)
         return self
+
+    def _mcfg(self, s, step=None, r_type=None):
+        cfg = dict(self.cfg)
+        if self.p_change_short is not None and is_short(s):
+            cfg["p_change"] = self.p_change_short
+        if step is not None:
+            cfg["step"] = max(step, cfg["step"])
+        if self.rate_half_life is not None and not is_short(s):
+            hl = self.rate_half_life
+            cfg["half_life"] = hl.get(r_type, None) if isinstance(hl, dict) else hl
+        return cfg
+
+    def _grid(self, r, s, mode, step=None):
+        cp = self._cp(r)
+        cps = [G.shift_cellprior(cp, d, mode) for d in SHIFT_GRID]
+        return G.win_probability_grid(r, s, self.ST, self.sprior, cps, **self._mcfg(s, step, r["machine_type"]))
+
+    def _fit_shift(self, q, seq):
+        """Pick (mode, sigma) maximizing sum over train episodes of log sum_delta prior(delta) prod_m evidence_m."""
+        modes = SHIFT_MODES if self.episode_shift == "learn" else (self.episode_shift,)
+        sigmas = SIGMA_GRID if self.shift_sigma == "learn" else (float(self.shift_sigma),)
+        eps = {}
+        for r in q:
+            eps.setdefault(r["episode_id"], []).append(r)
+        best = None; self.shift_table = {}
+        for mode in modes:
+            ev = {e: [0.0] * len(SHIFT_GRID) for e in eps}
+            for e, rs in eps.items():
+                for r in rs:
+                    g = self._grid(r, seq[r["machine_id"]], mode, step=4)
+                    ev[e] = [x + z for x, (_, z) in zip(ev[e], g)]
+            for sg in sigmas:
+                lp = shift_logprior(sg)
+                tot = sum(G.logsumexp([a + b for a, b in zip(lp, v)]) for v in ev.values())
+                self.shift_table[(mode, sg)] = tot
+                if best is None or tot > best[0]:
+                    best = (tot, mode, sg)
+        _, self.shift_mode, self.shift_sigma_fit = best
 
     def _cp(self, r):
         if self.cellpriors is None:
             return None
         return G.lookup_cell_prior(self.cellpriors, r, self.cell_group if self.cell_prior == "learn" else "none")
 
+    def win_probs(self, q, seq):
+        """{query_id: P(win)} from the gate (with the episode shift if enabled), before any neighbour adjustment."""
+        if self.episode_shift is not None and self.shift_sigma_fit > 0:
+            lp = shift_logprior(self.shift_sigma_fit); eps = {}; out = {}
+            for r in q:
+                eps.setdefault(r["episode_id"], []).append(r)
+            for rs in eps.values():
+                grids = [self._grid(r, seq[r["machine_id"]], self.shift_mode) for r in rs]
+                post = list(lp)
+                for g in grids:
+                    post = [x + z for x, (_, z) in zip(post, g)]
+                zz = G.logsumexp(post); post = [math.exp(x - zz) for x in post]
+                for r, g in zip(rs, grids):
+                    out[r["query_id"]] = sum(w * p for w, (p, _) in zip(post, g))
+            return out
+        return {r["query_id"]: G.win_probability(r, seq[r["machine_id"]], self.ST, self.sprior, cellprior=self._cp(r),
+                                                 **self._mcfg(seq[r["machine_id"]], r_type=r["machine_type"]))
+                for r in q}
+
     def predict(self, pub, split):
-        q, seq = load_split(pub, split); out = {}
-        for r in q:
-            s = seq[r["machine_id"]]
-            cfg = self.cfg
-            if self.p_change_short is not None and is_short(s):
-                cfg = dict(cfg, p_change=self.p_change_short)
-            pw = G.win_probability(r, s, self.ST, self.sprior, cellprior=self._cp(r), **cfg)
-            out[r["query_id"]] = [1 - pw] + [pw * x for x in self.sizes.predict(r, s)]
-        return out
+        q, seq = load_split(pub, split)
+        pw = self.win_probs(q, seq)
+        if self.neighbor_adjust:
+            f = neighbor_feature(q, seq, self.nbr_window)
+            pw = {k: min(1 - 1e-4, max(1e-4, v + self.nbr_beta * f[k])) for k, v in pw.items()}
+        return {r["query_id"]: [1 - pw[r["query_id"]]] + [pw[r["query_id"]] * x for x in
+                                                          self.sizes.predict(r, seq[r["machine_id"]])] for r in q}
+
+    def _fit_neighbor(self, pub, q, seq):
+        """Least squares (= the contest's squared error on P(win)) of train label minus P(win) on the neighbour
+        feature, for each window in NBR_WINDOWS; keep the window with the largest error reduction."""
+        with open(os.path.join(pub, "train", "labels.csv"), newline="") as fh:
+            y = {r["query_id"]: float(int(r["outcome"]) > 0) for r in csv.DictReader(fh)}
+        pw = self.win_probs(q, seq); res = {k: y[k] - v for k, v in pw.items()}
+        best = (0.0, NBR_WINDOWS[0], 0.0)
+        for W in NBR_WINDOWS:
+            f = neighbor_feature(q, seq, W); ks = list(res)
+            sxx = sum(f[k] ** 2 for k in ks); sxy = sum(f[k] * res[k] for k in ks)
+            if sxx > 0 and sxy * sxy / sxx > best[0]:
+                best = (sxy * sxy / sxx, W, sxy / sxx)
+        _, self.nbr_window, self.nbr_beta = best

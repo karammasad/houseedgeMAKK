@@ -68,9 +68,13 @@ def _cell_mixture(nz, kz, zc, cp):
     return ll, (wA * pA + wB * pB) / s
 
 
-def machine_tables(seq_m, cut, taus, ST, a, b, cellprior=None):
-    """Per structure (plus 'no gate' last): list over taus (+ None = no flip) of (log marginal lik, P(win at cut))."""
-    w = wins(seq_m); out = []; base = 2 * betaln(a, b)
+def machine_counts(seq_m, cut, taus, ST, half_life=None):
+    """Sufficient statistics, independent of any cell prior. Per structure: list over taus (+ None = no flip) of
+    (nz, kz, zc): ticks and wins per gate cell (after the flip, if any) and the cell the cutoff falls in.
+    Last entry: 'no gate' totals (n0, k0). half_life (ticks) optionally down-weights old ticks (counts become
+    effective counts)."""
+    w = wins(seq_m); out = []
+    wt = (lambda t: 1.0) if half_life is None else (lambda t: 2.0 ** (-(cut - 1 - t) / half_life))
     for form, st in ST:
         ts, xs, ys = [], [], []
         for t in range(max(st), len(w)):
@@ -81,9 +85,10 @@ def machine_tables(seq_m, cut, taus, ST, a, b, cellprior=None):
                 continue
             ts.append(t); xs.append(x); ys.append(w[t])
         n = [[0], [0]]; k = [[0], [0]]
-        for x, y in zip(xs, ys):
+        for t, x, y in zip(ts, xs, ys):
+            v = wt(t)
             for c in (0, 1):
-                n[c].append(n[c][-1] + (x == c)); k[c].append(k[c][-1] + (x == c and y == 1))
+                n[c].append(n[c][-1] + v * (x == c)); k[c].append(k[c][-1] + v * (x == c and y == 1))
         N = [n[0][-1], n[1][-1]]; K = [k[0][-1], k[1][-1]]
         xc = gate_value(form, st, w, cut)
         rows = []
@@ -94,7 +99,19 @@ def machine_tables(seq_m, cut, taus, ST, a, b, cellprior=None):
                 i = bisect_left(ts, tau)
                 nz = [n[0][i] + (N[1] - n[1][i]), n[1][i] + (N[0] - n[0][i])]
                 kz = [k[0][i] + (K[1] - k[1][i]), k[1][i] + (K[0] - k[0][i])]
-            zc = None if xc is None else (xc if tau is None else xc ^ 1)
+            rows.append((nz, kz, None if xc is None else (xc if tau is None else xc ^ 1)))
+        out.append(rows)
+    obs = [(t, x) for t, x in enumerate(w) if x >= 0]
+    out.append((sum(wt(t) for t, _ in obs), sum(wt(t) * x for t, x in obs)))
+    return out
+
+
+def tables_from_counts(C, ntau, a, b, cellprior=None):
+    """(log marginal lik, P(win at cut)) per structure and tau, from machine_counts output."""
+    out = []; base = 2 * betaln(a, b)
+    for rows in C[:-1]:
+        res = []
+        for nz, kz, zc in rows:
             if cellprior is None:
                 ll = betaln(kz[0] + a, nz[0] - kz[0] + b) + betaln(kz[1] + a, nz[1] - kz[1] + b) - base
                 if zc is None:
@@ -103,11 +120,16 @@ def machine_tables(seq_m, cut, taus, ST, a, b, cellprior=None):
                     pr = (kz[zc] + a) / (nz[zc] + a + b)
             else:
                 ll, pr = _cell_mixture(nz, kz, zc, cellprior)
-            rows.append((ll, pr))
-        out.append(rows)
-    v = [x for x in w if x >= 0]; n0, k0 = len(v), sum(v)
-    out.append([(betaln(k0 + a, n0 - k0 + b) - betaln(a, b), (k0 + a) / (n0 + a + b))] * (len(taus) + 1))
+            res.append((ll, pr))
+        out.append(res)
+    n0, k0 = C[-1]
+    out.append([(betaln(k0 + a, n0 - k0 + b) - betaln(a, b), (k0 + a) / (n0 + a + b))] * ntau)
     return out
+
+
+def machine_tables(seq_m, cut, taus, ST, a, b, cellprior=None, half_life=None):
+    """Per structure (plus 'no gate' last): list over taus (+ None = no flip) of (log marginal lik, P(win at cut))."""
+    return tables_from_counts(machine_counts(seq_m, cut, taus, ST, half_life), len(taus) + 1, a, b, cellprior)
 
 
 def learn_structure_prior(queries, seq, ST, a=.5, b=.5, p_change=.5, step=4, tau_min=40, cellprior=None):
@@ -125,12 +147,8 @@ def learn_structure_prior(queries, seq, ST, a=.5, b=.5, p_change=.5, step=4, tau
     return [x / s for x in acc]
 
 
-def win_probability(q, seq_m, ST, sprior, a=.5, b=.5, p_change=.5, step=2, tau_min=40, cellprior=None,
-                    evidence=False):
-    """Posterior-mean P(win at cutoff). With evidence=True returns (P(win), log marginal likelihood of the log)."""
-    cut = q["cutoff"]; taus = list(range(tau_min, cut - 2, step))
-    lprior = [math.log(p_change / len(taus))] * len(taus) + [math.log(1 - p_change)]
-    tb = machine_tables(seq_m, cut, taus, ST, a, b, cellprior); J = []; PR = []
+def _combine(tb, sprior, lprior):
+    J = []; PR = []
     for si, rows in enumerate(tb):
         if sprior[si] <= 0:
             continue
@@ -138,8 +156,42 @@ def win_probability(q, seq_m, ST, sprior, a=.5, b=.5, p_change=.5, step=2, tau_m
         for ti, (ll, pr) in enumerate(rows):
             J.append(ll + ls + lprior[ti]); PR.append(pr)
     z = logsumexp(J)
-    p = sum(math.exp(j - z) * p for j, p in zip(J, PR))
+    return sum(math.exp(j - z) * p for j, p in zip(J, PR)), z
+
+
+def _taus(cut, p_change, step, tau_min):
+    taus = list(range(tau_min, cut - 2, step))
+    return taus, [math.log(p_change / len(taus))] * len(taus) + [math.log(1 - p_change)]
+
+
+def win_probability(q, seq_m, ST, sprior, a=.5, b=.5, p_change=.5, step=2, tau_min=40, cellprior=None,
+                    evidence=False, half_life=None):
+    """Posterior-mean P(win at cutoff). With evidence=True returns (P(win), log marginal likelihood of the log)."""
+    taus, lprior = _taus(q["cutoff"], p_change, step, tau_min)
+    tb = machine_tables(seq_m, q["cutoff"], taus, ST, a, b, cellprior, half_life)
+    p, z = _combine(tb, sprior, lprior)
     return (p, z) if evidence else p
+
+
+def win_probability_grid(q, seq_m, ST, sprior, cellpriors, a=.5, b=.5, p_change=.5, step=2, tau_min=40,
+                         half_life=None):
+    """[(P(win), log evidence)] for each cell prior in `cellpriors`, sharing one pass over the history."""
+    taus, lprior = _taus(q["cutoff"], p_change, step, tau_min)
+    C = machine_counts(seq_m, q["cutoff"], taus, ST, half_life)
+    return [_combine(tables_from_counts(C, len(taus) + 1, a, b, cp), sprior, lprior) for cp in cellpriors]
+
+
+def shift_cellprior(cp, delta, mode="both"):
+    """Shift the on and/or off Beta means by delta on the log-odds scale, keeping strengths.
+    mode: 'both' (same shift), 'on', 'off', 'contrast' (on up, off down)."""
+    a1, b1, a0, b0 = cp; k1, k0 = a1 + b1, a0 + b0
+    def sh(a_, k, d):
+        m = a_ / k; m = min(max(m, 1e-6), 1 - 1e-6)
+        m = 1 / (1 + math.exp(-(math.log(m / (1 - m)) + d)))
+        return m * k, (1 - m) * k
+    d_on = delta if mode in ("both", "on", "contrast") else 0.0
+    d_off = {"both": delta, "off": delta, "contrast": -delta}.get(mode, 0.0)
+    return sh(a1, k1, d_on) + sh(a0, k0, d_off)
 
 
 MEANS_ON = (.3, .4, .5, .6, .7, .8, .85, .9, .95, .98)

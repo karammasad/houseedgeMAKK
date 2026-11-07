@@ -114,6 +114,38 @@ split, so the gains mostly add up:
 - Possible next step: feed adi's win-gate posterior (wider family, learned cell priors) into GateSizes'
   coupling instead of method 1's. That needs a hook in method2_sizes, so it's Person B's call.
 
+## Round 3: improving the win rate (none adopted)
+
+**Where the error is** (`python -m adi.c5_decompose` on the best combo): true win probability would add +1.69
+(57.68 -> 59.37), true sizes +0.59. `python -m adi.win_diag`: only 2 of 768 validation machines miss P(win) by
+more than 0.3, so structure and flips are essentially solved. What's left is calibrating each machine's rate
+within the right cell. The largest single source is jackpot "on" cells: residual sd 0.130 vs true-rate sd 0.164,
+so the model explains only about a third of their variation. Binomial noise would allow about 0.05.
+
+Three ideas, each learned on train only, now available as settings and **off by default**:
+
+| setting | what | tuning (alone, npmle sizes; base 55.676) |
+| --- | --- | --- |
+| `episode_shift: "learn"` | shared log-odds shift of all cell rates per episode, delta ~ N(0, sigma^2), exact posterior over a grid; mode and sigma by train evidence (picks both, sigma 0.2) | 55.696 (+0.02) |
+| `rate_half_life: 256` (long logs only) | recency-weighted gate-cell counts; hurts short logs (55.29-55.58 when applied to all) | 55.700 (+0.02) |
+| `neighbor_adjust: true` | P(win) += beta * (episode neighbours' win rate over the last W ticks minus their earlier rate); W, beta by least squares on train labels (picks W=20, beta 0.33) | 55.740 (+0.06) |
+
+Stacked on the best combo (57.685 / 57.427): neighbour + hl256 = **57.798 tuning but 57.337 audit** (audit went
+down). Adding the episode shift as well: 57.800. That fails rule 6, so the recommended settings are unchanged.
+
+Negative results worth knowing:
+- The static episode effect is small. The 43% between-episode residual share I saw earlier was mostly chance
+  (about 25% is expected with ~4 machines per cell side).
+- Jackpot on-rate variation isn't slow drift (jackpot-only half-life 48/96: no gain), and isn't explained by
+  payout sizes at fixed lags or at the machine's own gate lags (only a ±0.04 bias).
+- The "hot room" signal (neighbours' recent wins) is real and consistent: same slope on train labels (+0.18) and
+  validation truth (+0.19). But it explains only about 5% of the win error, and it didn't survive the audit
+  once stacked.
+
+Ideas not tried: a flexible (NPMLE) prior over cell rates per type with an additive signal shift; letting the
+neighbour effect differ by machine type; using adi's win-gate posterior inside GateSizes' coupling (needs a hook
+in method2_sizes).
+
 ## Not done yet (TASK.md order)
 C4 (L1 logistic fallback gate), C6 (episode-shared lag pairs/polarity), C7 (uniform-vs-learned robustness drill).
 Also untested: whether the per-type cell priors transfer to round 2 (they are re-learned from round 2's train
