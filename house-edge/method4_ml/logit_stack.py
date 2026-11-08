@@ -35,12 +35,12 @@ def design(X, spec):
     return np.column_stack(cols) if cols else np.zeros((len(X), 0))
 
 
-def fit_offset_logistic(Z, y, offset, l2=1.0, iters=30):
+def fit_offset_logistic(Z, y, offset, l2=1.0, iters=30, w=None):
     """beta = argmin -loglik(y | sigmoid(offset + Z beta)) + l2 * |beta|^2 (no intercept: the offset is fixed)."""
-    beta = np.zeros(Z.shape[1]); y = np.asarray(y, float)
+    beta = np.zeros(Z.shape[1]); y = np.asarray(y, float); w = np.ones(len(y)) if w is None else np.asarray(w, float)
     for _ in range(iters):
-        p = 1 / (1 + np.exp(-(offset + Z @ beta))); g = Z.T @ (y - p) - 2 * l2 * beta
-        H = (Z * (p * (1 - p))[:, None]).T @ Z + 2 * l2 * np.eye(Z.shape[1])
+        p = 1 / (1 + np.exp(-(offset + Z @ beta))); g = Z.T @ (w * (y - p)) - 2 * l2 * beta
+        H = (Z * (w * p * (1 - p))[:, None]).T @ Z + 2 * l2 * np.eye(Z.shape[1])
         step = np.linalg.solve(H, g); beta += step
         if np.max(np.abs(step)) < 1e-8: break
     return beta

@@ -10,6 +10,7 @@ Everything is learned in fit() from pub/train (+ histories); nothing hardcoded. 
 variant="v1" runs the old baseline (baseline.py).
 """
 import hashlib, json, os, pickle, random
+import numpy as np
 from collections import defaultdict
 from multiprocessing import get_context
 from common.data import load_split, wins
@@ -19,9 +20,10 @@ from method4_ml.pooled import pooled_split
 from method4_ml.signal_shift import attach_signal_shift
 from method4_ml.features3 import episode_examples
 from method4_ml.size_hmm import SizeHMM
+from method4_ml.size_menu import fit_menu, snap
 from method4_ml.logit_stack import design, fit_offset_logistic, predict as lr_predict, check_layout
 
-FEATURE_VERSION = "f3.5"
+FEATURE_VERSION = "f3.5"   # (menu cache key also includes it)
 HERE = os.path.dirname(os.path.abspath(__file__))
 # adi's win-gate configuration (adi/FINDINGS.md): wide pruned family, learned cell priors. Its built-in sizes are only a
 # cheap placeholder here: the real size model is SIZES below, fit separately (optionally on every split's histories).
@@ -76,7 +78,7 @@ class GateInit:
 
 class Model:
     def __init__(self, variant="v3", stack="hgb", n_estimators=150, max_depth=3, subsample=0.8, K=6, K_short=6, t_min=100, splits="all", lr=0.03, max_leaf_nodes=15,
-                 min_samples_leaf=1000, l2=1.0, max_iter=400, seeds=3, blend=0.4, sizes="gate", gate=None, size_kw=None, size_pool="train", signal_shift=True, size_feat=True, size_stack=False, size_blend=0.5, tick_seed=0, bags=5, lr_weight=0.5, lr_spec=("d", "chg"), lr_l2=1.0,
+                 min_samples_leaf=1000, l2=1.0, max_iter=400, seeds=3, blend=0.4, sizes="gate", gate=None, size_kw=None, size_pool="train", signal_shift=True, size_feat=True, size_stack=False, size_blend=0.5, tick_seed=0, bags=5, lr_weight=0.5, lr_spec=("d", "chg"), lr_l2=1.0, cshift=0.0, cs_clip=10.0, size_menu=True, menu_k=32,
                  workers=None, cache=True, **v1kw):
         self.variant = variant
         if variant == "v1":
@@ -90,6 +92,8 @@ class Model:
         self.size_feat, self.size_stack, self.size_blend = size_feat, size_stack, size_blend
         self.tick_seed = tick_seed   # which random history ticks become training examples (0 = original sample)
         self.lr_weight, self.lr_spec, self.lr_l2 = lr_weight, tuple(lr_spec), lr_l2
+        self.size_menu, self.menu_k = size_menu, menu_k   # snap sizes onto a learned 2-vector menu per type (size_menu.py)
+        self.cshift, self.cs_clip = cshift, cs_clip   # covariate-shift correction strength (0 = off): weights ~ (q(x)/p(x))**cshift
         self.bags = bags             # bagging: stackers trained on `bags` independent tick samples, probabilities averaged
         self.stack = stack
         self.og = dict(learning_rate=lr, n_estimators=n_estimators, max_depth=max_depth, subsample=subsample,
@@ -185,7 +189,20 @@ class Model:
         if self.sizes_kind in ("hmm", "mix"):
             q, seq = load_split(pub, "train"); self.size_models["hmm"] = SizeHMM().fit(q, seq)
         splits = ["train", "validation", "test"] if self.splits == "all" else ["train"]
-        self.clfs = []; base_seed = self.tick_seed; Xall, yall = [], []
+        self.menu = None
+        if self.size_menu and "gate" in self.size_models:     # exact two-state size menu, learned from HISTORY ticks only
+            path = _cache_path("menu", os.path.abspath(pub), json.dumps(self.gate_kw, sort_keys=True), self.signal_shift,
+                               json.dumps(self.size_kw, sort_keys=True), self.size_pool, tuple(splits), self.menu_k, FEATURE_VERSION)
+            self.menu = _load(path) if self.cache else None
+            if self.menu is None:
+                self.menu = fit_menu(pub, splits, self.size_models["gate"], self.menu_k, self.workers)
+                if self.cache:
+                    _save(path, self.menu)
+        import numpy as np
+        self.clfs = []; base_seed = self.tick_seed; Xall, yall, Wall = [], [], []
+        Xq = None
+        if self.cshift > 0:      # query-regime features of every split (features only, no labels): the target of the shift correction
+            Xq = np.vstack([self._sel(self._features(pub, s, queries=True)[0]) for s in splits if os.path.exists(os.path.join(pub, s, "queries.csv"))])
         for bag in range(self.bags):     # each bag: its own random training ticks (selection-luck reduction, analysis/bagging.py)
             self.tick_seed = base_seed + bag
             X, y = [], []
@@ -194,23 +211,38 @@ class Model:
                     a, b, _ = self._features(pub, s); X += a; y += b
             self.n_train = len(X); ypay = y; y = [int(v > 0) for v in ypay]
             X = self._sel(X); Xall.append(X); yall += y
+            sw = self._shift_weights(X, Xq) if Xq is not None else None
+            Wall.append(np.ones(len(X)) if sw is None else sw)
             if self.stack == "offset":
                 from sklearn.ensemble import GradientBoostingClassifier
                 self.clfs += [GradientBoostingClassifier(init=GateInit(), random_state=k, **self.og).fit(X, y) for k in range(self.seeds)]
             else:
-                self.clfs += [HistGradientBoostingClassifier(random_state=k, **self.gbm).fit(X, y) for k in range(self.seeds)]
+                self.clfs += [HistGradientBoostingClassifier(random_state=k, **self.gbm).fit(X, y, sample_weight=Wall[-1] if Xq is not None else None) for k in range(self.seeds)]
         self.tick_seed = base_seed
         self.beta = None
         if self.lr_weight > 0:   # structured offset-logistic correction of the gate's P(win) (adi round 7 idea, extended)
             import numpy as np
             XA = np.vstack(Xall); check_layout(XA); yA = np.asarray(yall)
             off = np.log(np.clip(XA[:, 0], 1e-4, 1 - 1e-4) / (1 - np.clip(XA[:, 0], 1e-4, 1 - 1e-4)))
-            self.beta = fit_offset_logistic(design(XA, self.lr_spec), yA, off, self.lr_l2)
+            self.beta = fit_offset_logistic(design(XA, self.lr_spec), yA, off, self.lr_l2, w=np.concatenate(Wall))
         self.sclfs = []
         if self.size_stack:    # P(1x | win) stacker on the same features, winning ticks only
             wi = [i for i, v in enumerate(ypay) if v > 0]; Xs = X[wi]; ys = [int(ypay[i] == 1) for i in wi]
             self.sclfs = [HistGradientBoostingClassifier(random_state=k, **self.gbm).fit(Xs, ys) for k in range(self.seeds)]
         return self
+
+    def _shift_weights(self, X, Xq):
+        """Density-ratio weights q(x)/p(x) for training rows X vs query-regime rows Xq (discriminator on features; no labels)."""
+        from sklearn.ensemble import HistGradientBoostingClassifier
+        Z = np.vstack([X, Xq]); d = np.r_[np.zeros(len(X)), np.ones(len(Xq))]
+        rs = np.random.RandomState(0); idx = rs.permutation(len(Z)); half = len(Z) // 2; A, B = idx[:half], idx[half:]
+        pr = np.zeros(len(Z))      # 2-fold cross-fitted so the discriminator does not memorise its own rows
+        for tr, te in ((A, B), (B, A)):
+            c = HistGradientBoostingClassifier(max_leaf_nodes=8, learning_rate=0.05, max_iter=150, min_samples_leaf=50, l2_regularization=5.0, random_state=0).fit(Z[tr], d[tr])
+            pr[te] = c.predict_proba(Z[te])[:, 1]
+        p = np.clip(pr[:len(X)], 1e-4, 1 - 1e-4); w = (p / (1 - p)) * (len(X) / len(Xq)) ** 0   # odds ~ density ratio (up to a constant)
+        w = np.clip(w / w.mean(), 1 / self.cs_clip, self.cs_clip) ** self.cshift
+        return w / w.mean()
 
     @staticmethod
     def _sel(X):
@@ -252,5 +284,7 @@ class Model:
             if P1 is not None:      # blend the size stacker into P(1x | win); rescale the big-win split to sum to 1
                 a = (1 - self.size_blend) * sz[0] + self.size_blend * P1[qid]; a = min(max(a, 1e-4), 1 - 1e-4)
                 rest = sum(sz[1:]); sz = [a] + [x * (1 - a) / rest for x in sz[1:]] if rest > 0 else sz
+            if self.menu is not None:
+                sz = snap(sz, self.menu.get(r["machine_type"]))
             out[qid] = [1 - p] + [p * x for x in sz]
         return out

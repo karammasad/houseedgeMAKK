@@ -10,7 +10,13 @@ Gradient learners can't discover parities from raw inputs (Shalev-Shwartz et al.
 - `model.py`: scikit-learn HistGradientBoostingClassifier on train-history ticks (subsampled to 150k).
   Score: 48.60 tuning (Method 1: 55.05). Needs `pip install scikit-learn`; cannot ship yet (see AGENTS.md rule 4).
 
-## v7 (current, model.py): tuning 58.260, audit 58.242, FULL 58.249
+## v8 (current, model.py): tuning 58.309, audit 58.287, FULL 58.297
+v8 = v7 + an exact size menu: the true size distribution given a win is one of exactly TWO vectors per type, identical across machines
+(analysis/generator_probe.py). `size_menu.py` learns the two vectors per type from HISTORY ticks (size model on seq[:t] -> position on
+the segment; history payout at t as the label) and snaps every size prediction onto the segment. +0.049 tuning / +0.045 audit / +0.048 full
+over v7 (RESEARCH_LOG #35). Leakage checks 1-4 pass. Disable with size_menu=false.
+
+## v7 (previous): tuning 58.260, audit 58.242, FULL 58.249
 v7 = v6 (bag of 5 tick samples) + a 50/50 blend with a structured offset-logistic correction of P(win) (`logit_stack.py`: size-state x P,
 size-state x (1-P), P(change) x (2P-1), per machine type; gate logit fixed as the offset; l2=1). Keep-check vs v6: KEEP (P .986, 4/4; keepcheck.py criterion). Vs team FINAL (58.156 / 57.986 / 58.074): +0.104 tuning / +0.256 audit /
 +0.175 full: still below the +0.15 TUNING bar of AGENTS rule 6 (audit moves the same way), so a team decision is needed to adopt it.

@@ -62,7 +62,21 @@ def test_no_answer_files_read():
     return m
 
 
+def test_menu_inputs_strictly_before():
+    """Size-menu rows: the size model sees seq[:t] only and the label is the history payout at t (never a query label)."""
+    from method4_ml.size_menu import _rows, CL
+    for sp in ("train", "validation", "test"):
+        q, seq = load_split(PUB, sp); qids = {r["machine_id"]: r for r in q}
+        jobs, Y, _ = _rows(PUB, (sp,), 4)
+        for (r, trunc), y in zip(jobs, Y):
+            s = seq[r["machine_id"]]; t = len(trunc)
+            assert trunc == s[:t] and t < r["cutoff"], "menu input reaches the label tick or the query tick"
+            assert s[t] > 0 and y[CL[s[t]]] == 1, "menu label is not the history payout at t"
+    print("OK 4: size-menu inputs stop strictly before their (history) label tick; no query tick is used")
+
+
 if __name__ == "__main__":
+    test_menu_inputs_strictly_before()
     m = test_no_answer_files_read() if "--io" in sys.argv else Model(bags=1, seeds=1).fit(PUB)
     sz = m.size_models["gate"] if m.size_feat else None
     test_features_ignore_the_future(m.gm, sz); test_missing_is_not_a_loss(m.gm, sz)

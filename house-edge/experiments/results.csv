@@ -148,3 +148,19 @@ time,user,method,kwargs,note,tuning,audit,tune_stable,tune_short_history,tune_dr
 2026-11-07 19:16,adinounou,adi.cook,"{""inner"": ""r2""}","adi cook on adi.r2 (round-two widened model) + short-log hierarchy, kappa by train evidence",58.2773,58.2082,0.02289,0.05228,0.02712,0.01596,484.3
 2026-11-07 19:17,adinounou,adi.cookblend,"{""workers"": 2}","adi cook: 50/50 cook (short-log hierarchical split cells, kappa by train evidence) + stack, workers 2",58.2963,58.2124,0.02147,0.05210,0.02704,0.01627,572.5
 2026-11-07 19:27,adinounou,adi.cookblend,{},adi cook: 50/50 cook + stack (stack unpatched),58.2939,58.2282,0.02146,0.05230,0.02703,0.01628,515.9
+2026-11-07 18:06,adinounou,adi.r2,{},adi r2: wide adaptive settings on main (regression check),58.1850,,0.02322,0.05491,0.02680,0.01984,222.8
+2026-11-07 18:10,adinounou,adi.r2,"{""base"": {""sizes"": ""gate"", ""gate_cell_prior"": ""npmle"", ""gate_couple"": true, ""gate_couple_iters"": 20, ""gate_tied"": true, ""gate_tie_weight"": ""learn"", ""gate_joint_em"": true, ""gate_max_lag"": 8, ""win_model"": ""adi"", ""win_kwargs"": {""max_lag"": 12, ""xor_order"": 3, ""and_pairs"": true, ""prior_flips"": true, ""prune"": 0.01, ""floor"": 0.05, ""cell_prior"": ""learn"", ""cell_group"": ""type"", ""p_change_short"": ""learn"", ""size_split"": ""both"", ""cell_signal"": true}}}",adi r2: wide minus size lags 12,58.2384,,0.02291,0.05489,0.02718,0.01601,205.4
+2026-11-07 18:10,adinounou,adi.r2,"{""win"": {""xor_order"": 2}}",adi r2: wide minus triples,58.1850,,0.02322,0.05491,0.02680,0.01984,212.2
+2026-11-07 18:10,adinounou,adi.r2,"{""win"": {""size_split"": ""small""}}",adi r2: wide minus both-lag split,58.1691,,0.02292,0.05415,0.02831,0.02052,223.8
+2026-11-07 18:14,adinounou,adi.r2,{},adi r2: wide + adaptive size-lag range,58.2384,,0.02291,0.05489,0.02718,0.01601,195.1
+2026-11-07 18:32,kareem,method4_ml,{},session baseline recheck v7 (uncommitted fallback edit),58.2596,,0.02122,0.05308,0.02838,0.01682,136.4
+2026-11-07 19:23,kareem,method4_ml,"{""blend"":1.0,""lr_weight"":0}","power-harness check: {""blend"":1.0,""lr_weight"":0}",58.1460,,0.02110,0.05709,0.03153,0.01783,130.8
+2026-11-07 19:25,kareem,method4_ml,"{""blend"":0.7,""lr_weight"":0}","power-harness check: {""blend"":0.7,""lr_weight"":0}",58.2302,,0.02079,0.05432,0.02981,0.01666,130.8
+2026-11-07 19:28,kareem,method4_ml,"{""cshift"":1.0}",cshift 1.0: covariate-shift (query-regime) weights on stacker + correction,58.2612,,0.02162,0.05269,0.02788,0.01719,74.0
+2026-11-07 19:29,kareem,method4_ml,{},v7 recheck after cshift code added (default off),58.2596,,0.02122,0.05308,0.02838,0.01682,46.7
+2026-11-07 19:42,kareem,method4_ml,"{""bags"":10}",v7 with bags=10 (more tick samples),58.2593,,0.02138,0.05311,0.02811,0.01691,650.0
+2026-11-07 20:19,kareem,method4_ml,{},"v8: v7 + learned exact 2-vector size menu (history ticks only), snapped",58.2916,,0.02078,0.05323,0.02753,0.01569,90.2
+2026-11-07 20:21,kareem,method4_ml,"{""menu_k"":16}","v8 candidate: size menu, 16 ticks/machine",58.3000,,0.02063,0.05303,0.02748,0.01551,97.5
+2026-11-07 20:24,kareem,method4_ml,"{""menu_k"":32}","v8 candidate: size menu, 32 ticks/machine",58.3091,,0.02041,0.05283,0.02729,0.01546,153.6
+2026-11-07 20:28,kareem,method4_ml,"{""menu_k"":64}","v8 candidate: size menu, 64 ticks/machine",58.3106,,0.02036,0.05279,0.02728,0.01547,235.9
+2026-11-07 20:28,kareem,method4_ml,{},v8 final candidate: v7 + learned 2-vector size menu (menu_k=32),58.3091,58.2873,0.02041,0.05283,0.02729,0.01546,34.3
