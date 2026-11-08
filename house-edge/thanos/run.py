@@ -7,7 +7,7 @@ import argparse, os, sys
 ap = argparse.ArgumentParser()
 ap.add_argument("--data", default="data/main"); ap.add_argument("--out", required=True)
 ap.add_argument("--splits", default="train", choices=("train", "all")); ap.add_argument("--threads", type=int, default=2)
-ap.add_argument("--tickset", default="own"); ap.add_argument("--also", default="", help="comma list of extra splits to predict (e.g. validation)")
+ap.add_argument("--tickset", default="own"); ap.add_argument("--no-adapt", action="store_true"); ap.add_argument("--no-cross", action="store_true"); ap.add_argument("--no-flipwin", action="store_true"); ap.add_argument("--also", default="", help="comma list of extra splits to predict (e.g. validation)")
 A = ap.parse_args()
 for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS"):
     os.environ[v] = str(A.threads)
@@ -20,7 +20,7 @@ from .model import Model  # noqa: E402
 def main():
     t0 = time.time(); c0 = time.process_time()
     pub = public_dir(A.data); os.makedirs(A.out, exist_ok=True)
-    M = Model(A.splits, tickset=A.tickset).fit(pub)
+    M = Model(A.splits, tickset=A.tickset, adapt=not A.no_adapt, cross=not A.no_cross, flipwin=not A.no_flipwin).fit(pub)
     info = {"splits": A.splits, "threads": A.threads, "timing": {}}
     for sp in ["test"] + [s for s in A.also.split(",") if s]:
         P = M.predict(pub, sp)

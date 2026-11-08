@@ -24,7 +24,22 @@ GRID = np.arange(-9.0, 7.0001, 0.2); NG = len(GRID)
 SIZES = (1, 2, 5, 20)
 TYPES_DEFAULT = ("balanced", "jackpot", "steady")
 NBINS = 20
-TICKSET = "own"      # "common": a tick counts only if all lags 1..MAXLAG are observed (pre-registered EGP)
+GATE_ORDER = 3       # largest XOR lag set screened (1 = singles, 2 = + pairs, 3 = + triples); kept only if the data give it mass
+SIZE_DEFS = {"big": lambda y: y >= 2, "win": lambda y: y >= 1, "one": lambda y: y == 1}
+PAIR_KEEP = True     # pair-level keep rule on top of the per-(gate, size lag) 1% rule
+SIZE_CHOICES = ("big", "win", "one")
+SIZE_DEF = "big"     # what the binary size state b_t reads at the size lag; chosen per kit by size evidence in fit_hyper
+# Gate inputs (round-2 widening). A gate G is a tuple of input codes, XORed:
+#   1..8            own WIN at that lag (the Round 1 family)
+#   BIG + l         own "payout >= 2" bit at lag l                           -> "win chance driven by an earlier payout size"
+#   NB + 10 r + l   WIN of the episode-mate r positions ahead (machine ids sorted, cyclic, r = 1..7) at lag l -> cross-machine rules
+# Neighbour slots r are separate structures with their own learned prior mass, so "always the adjacent machine" and "some partner"
+# are both expressible; a slot nobody uses is pruned by the screen and costs nothing.
+BIG, NB = 100, 1000
+CROSS = True         # screen neighbour inputs (singles and own-lag XOR neighbour-lag pairs)
+BIGGATE = True       # screen own size-state singles as gate inputs
+WINDOW_FRAC = 0.45   # flip-free prefix of long logs used for the population fit (lowered automatically if flips come earlier)
+TICKSET = "own"     # "common": a tick counts only if all lags 1..MAXLAG are observed (pre-registered EGP)
                      # "own": a tick counts for structure k when k's own lags are observed; ticks k cannot use get a plug-in
                      #        marginal term (machine win rate, size frequencies) so every structure covers the same observed ticks
 
@@ -42,7 +57,7 @@ def logsig(x):
 # ----------------------------------------------------------------------------------------------------------- data views
 class Machine:
     """Arrays for one machine, built from its observed prefix y[0:cutoff] only."""
-    __slots__ = ("qid", "ep", "mid", "type", "signal", "cutoff", "y", "short", "use", "w", "big", "cat", "obs8")
+    __slots__ = ("qid", "ep", "mid", "type", "signal", "cutoff", "y", "short", "use", "w", "big", "cat", "obs8", "nbw", "b2")
 
     def __init__(self, qid, ep, mid, typ, signal, y):
         self.qid, self.ep, self.mid, self.type, self.signal = qid, ep, mid, typ, int(signal)
@@ -50,7 +65,7 @@ class Machine:
         obs = self.y >= 0
         self.short = bool(obs.sum() < 0.5 * self.cutoff)          # observable log shape
         self.w = np.where(obs, (self.y > 0).astype(np.int16), -1)
-        self.big = np.where(obs, (self.y >= 2).astype(np.int16), -1)
+        self.big = np.where(obs, SIZE_DEFS[SIZE_DEF](self.y).astype(np.int16), -1)
         cat = np.full(self.cutoff, -1, np.int16)
         for i, v in enumerate(SIZES):
             cat[self.y == v] = i
@@ -61,18 +76,59 @@ class Machine:
             use[l:] &= obs[:-l]
         self.use = use
         self.obs8 = obs.copy(); self.obs8[:MAXLAG] = False
+        self.b2 = np.where(obs, (self.y >= 2).astype(np.int16), -1)   # payout >= 2: the gate-input "size" bit (independent of SIZE_DEF)
+        self.nbw = []                                            # episode-mates' win arrays by offset r = 1.. (set by link_episodes)
+
+
+def link_episodes(machines):
+    """Give each machine its episode-mates' WIN arrays (pre-cutoff observations only), ordered by cyclic offset in sorted machine id."""
+    by = {}
+    for m in machines:
+        by.setdefault(m.ep, []).append(m)
+    for ms in by.values():
+        ms = sorted(ms, key=lambda m: m.mid); M = len(ms)
+        for i, m in enumerate(ms):
+            nb = []
+            for r in range(1, M):
+                w = ms[(i + r) % M].w; a = np.full(m.cutoff, -1, np.int16); n = min(len(w), m.cutoff); a[:n] = w[:n]; nb.append(a)
+            m.nbw = nb
+    return machines
 
 
 def machines_from_split(queries, seq):
-    return [Machine(q["query_id"], q["episode_id"], q["machine_id"], q["machine_type"], q["signal"], seq[q["machine_id"]]) for q in queries]
+    return link_episodes([Machine(q["query_id"], q["episode_id"], q["machine_id"], q["machine_type"], q["signal"], seq[q["machine_id"]])
+                          for q in queries])
+
+
+def inp(m, q):
+    """(array, lag) of gate input code q for machine m; -1 = unobserved."""
+    if q < BIG:
+        return m.w, q
+    if q < NB:
+        return m.b2, q - BIG
+    r, l = divmod(q - NB, 10)
+    return (m.nbw[r - 1] if r - 1 < len(m.nbw) else np.full(m.cutoff, -1, np.int16)), l
+
+
+def is_own_win(G):
+    return all(q < BIG for q in G)
 
 
 def usable(m, G, l):
     if TICKSET == "common" or l is None:
-        return m.use
+        if is_own_win(G):
+            return m.use
+        u = m.use.copy()                                         # screen / common set + the extra inputs' availability
+        for q in G:
+            if q >= BIG:
+                a, lg = inp(m, q); u[lg:] &= a[:-lg] >= 0
+        return u
     u = m.obs8.copy()
     for q in set(G) | {l}:
-        u[q:] &= m.y[:-q] >= 0
+        if q >= BIG:
+            a, lg = inp(m, q); u[lg:] &= a[:-lg] >= 0
+        else:
+            u[q:] &= m.y[:-q] >= 0
     return u
 
 
@@ -96,36 +152,93 @@ def gate_bits(m, G, end=None, l=None):
     end = m.cutoff if end is None else end
     t = np.nonzero(usable(m, G, l)[:end])[0]
     g = np.zeros(len(t), np.int16)
-    for l in G:
-        g ^= m.w[t - l]
+    for q in G:
+        a, lg = inp(m, q); g ^= a[t - lg]
     return t, g
 
 
 # ----------------------------------------------------------------------------------------------------------- screening
-ALL_GATES = [()] + [(l,) for l in range(1, MAXLAG + 1)] + list(it.combinations(range(1, MAXLAG + 1), 2))
+def all_gates():
+    L = range(1, MAXLAG + 1)
+    out = [()] + [G for k in range(1, GATE_ORDER + 1) for G in it.combinations(L, k)]
+    if BIGGATE:
+        out += [(BIG + l,) for l in L]
+    if CROSS and TICKSET == "own":                             # needs the plug-in term for ticks a neighbour input cannot cover
+        nb = [NB + 10 * r + l for r in range(1, 8) for l in L]
+        out += [(q,) for q in nb] + [(a, q) for a in L for q in nb]
+    return out
+
+
+def gate_name(G):
+    def one(q):
+        if q < BIG:
+            return str(q)
+        if q < NB:
+            return f"B{q - BIG}"
+        r, l = divmod(q - NB, 10); return f"N{r}@{l}"
+    return "(" + ",".join(one(q) for q in G) + ")"
+
+
+def set_size_def(machines, d):
+    """Rebuild every machine's size-state input for definition d (observed ticks only; missing stays -1)."""
+    global SIZE_DEF
+    SIZE_DEF = d
+    for m in machines:
+        m.big = np.where(m.y >= 0, SIZE_DEFS[d](m.y).astype(np.int16), -1)
+
+
+def size_evidence(machines, d):
+    """Total size log evidence under definition d: per machine, Dirichlet(1) per b group, averaged over size lags 1..MAXLAG."""
+    tot = 0.0
+    for m in machines:
+        b_all = np.where(m.y >= 0, SIZE_DEFS[d](m.y).astype(np.int16), -1)
+        t = np.nonzero(m.use[:window_end(m)])[0]; t = t[m.w[t] == 1]; ls = []
+        for l in range(1, MAXLAG + 1):
+            b = b_all[t - l]; c = m.cat[t]; ll = 0.0
+            for bb in (0, 1):
+                cnt = np.bincount(c[b == bb], minlength=4).astype(float)
+                ll += sum(math.lgamma(x + 1) for x in cnt) - math.lgamma(cnt.sum() + 4) + math.lgamma(4)
+            ls.append(ll)
+        tot += float(lse(np.array(ls))) - math.log(MAXLAG)
+    return tot
 
 
 def _betaln(a, b):
     return math.lgamma(a) + math.lgamma(b) - math.lgamma(a + b)
 
 
-def window_end(m, frac=0.45):
-    return m.cutoff if m.short else int(frac * m.cutoff)
+def window_end(m, frac=None):
+    return m.cutoff if m.short else int((WINDOW_FRAC if frac is None else frac) * m.cutoff)
+
+
+def flip_quantile(H, q=0.05):
+    """Quantile of the learned flip-position histogram (tau / cutoff), linear within bins."""
+    c = np.cumsum(H.hist); b = int(np.searchsorted(c, q)); lo = c[b - 1] if b else 0.0
+    return (b + (q - lo) / max(H.hist[b], 1e-12)) / NBINS
 
 
 def screen(machines, min_mass=0.01, iters=60):
     """Learn the support of k = (gate lag set, size lag) on flip-free windows. Win evidence: Beta(1,1) per gate cell;
     size evidence: Dirichlet(1,1,1,1) per b group; joint prior over (G, l) by EM on the product evidence."""
-    nG, nL = len(ALL_GATES), MAXLAG
+    ALL_GATES = all_gates(); nG, nL = len(ALL_GATES), MAXLAG
     EW = np.zeros((len(machines), nG)); ES = np.zeros((len(machines), nL))
     for i, m in enumerate(machines):
         end = window_end(m)
+        t0 = np.nonzero(m.use[:end])[0]; w0 = m.w[t0]; rows = {}
         for j, G in enumerate(ALL_GATES):
-            t, g = gate_bits(m, G, end); w = m.w[t]
+            g = np.zeros(len(t0), np.int16); ok = np.ones(len(t0), bool)
+            for q in G:
+                if q not in rows:
+                    a, lg = inp(m, q); rows[q] = a[t0 - lg]
+                v = rows[q]; g ^= v
+                if q >= BIG:
+                    ok &= v >= 0
             ll = 0.0
             for c in (0, 1):
-                sel = g == c; n = int(sel.sum()); k = int(w[sel].sum())
+                sel = ok & (g == c); n = int(sel.sum()); k = int(w0[sel].sum())
                 ll += _betaln(k + 1, n - k + 1)
+            if not ok.all():                                     # ticks this gate cannot read: one shared cell (same tick set for every gate)
+                n = int((~ok).sum()); k = int(w0[~ok].sum()); ll += _betaln(k + 1, n - k + 1)
             EW[i, j] = ll
         t = np.nonzero(m.use[:end])[0]; t = t[m.w[t] == 1]
         for l in range(1, nL + 1):
@@ -141,6 +254,13 @@ def screen(machines, min_mass=0.01, iters=60):
         lp = np.log(r.sum(0) + 1e-3) - math.log(r.sum() + 1e-3 * nG * nL)
     P = np.exp(lp)
     keep = [(ALL_GATES[a], b + 1, float(P[a, b])) for a in range(nG) for b in range(nL) if P[a, b] >= min_mass]
+    # pair-level rule (Momin's round-2 safeguard): a gate whose TOTAL mass over size lags passes min_mass keeps its best size lag
+    have = {(G, l) for G, l, _ in keep}
+    for a in range(nG if PAIR_KEEP else 0):
+        if P[a].sum() >= min_mass:
+            b = int(np.argmax(P[a]))
+            if (ALL_GATES[a], b + 1) not in have:
+                keep.append((ALL_GATES[a], b + 1, float(P[a, b])))
     keep.sort(key=lambda x: -x[2])
     return keep, P
 
@@ -258,10 +378,14 @@ def fit_hyper(machines, types=None, outer=3, em_iters=40, log=print):
     """Empirical-Bayes fit on the machines' histories (whatever set the caller passes: train only = inductive)."""
     H = Hyper()
     types = types or sorted({m.type for m in machines})
+    ev = {d: size_evidence(machines, d) for d in SIZE_CHOICES}
+    best = max(ev, key=ev.get); set_size_def(machines, best); H.size_def = best
+    H.info["size_evidence"] = {d: round(v, 1) for d, v in ev.items()}
+    log("  size state definition: " + ", ".join(f"{d} {v:.1f}" for d, v in ev.items()) + f" -> {best}")
     keep, P = screen(machines)
     H.K = [(G, l) for G, l, _ in keep]
-    H.info["screen"] = [(list(G), l, round(p, 4)) for G, l, p in keep]
-    log(f"  screen support ({len(H.K)}): " + ", ".join(f"{G}/{l}:{p:.3f}" for G, l, p in keep))
+    H.info["screen"] = [(gate_name(G), l, round(p, 4)) for G, l, p in keep]
+    log(f"  screen support ({len(H.K)}, window {WINDOW_FRAC:.2f}): " + ", ".join(f"{gate_name(G)}/{l}:{p:.3f}" for G, l, p in keep))
     stats = [window_stats(m, H.K, window_end(m)) for m in machines]
     R = np.stack([s[0] for s in stats]); C = np.stack([s[1] for s in stats]); E = np.stack([s[2] for s in stats]); sig = np.array([m.signal for m in machines])
     ty = np.array([m.type for m in machines])
@@ -295,14 +419,17 @@ def fit_hyper(machines, types=None, outer=3, em_iters=40, log=print):
 
 
 # ----------------------------------------------------------------------------------------------------------- full-history inference
-def machine_posterior(m, H, want_pred=True):
+def machine_posterior(m, H, want_pred=True, shift=None, moments=None):
+    """shift = (d_on, sd_on, d_off, sd_off): episode-effect prior override (mean offset added, prior sd replaced); None = default.
+    moments: dict to receive the posterior mean / variance of mu_on, mu_off (gated structures only) relative to the type prior mean."""
     """Exact posterior over (k, d, e, p, tau) for one machine on its full observed prefix, and the 5-class predictive at m.cutoff.
     Returns (log evidence per tau slot [no-flip, tau = 0..cutoff], predictive 5-vector or None).
     Uses only m.y (ticks < cutoff)."""
     x = H.theta[m.type]; v, V = unpack(x); B = basis(v["gam"]); lV = np.log(V); gam = v["gam"]
     si = m.signal
-    lw_on = grid_logw(v["a_on"] + v["b_on"] * si, math.exp(v["ls_on"]))
-    lw_off = grid_logw(v["a_off"] + v["b_off"] * si, math.exp(v["ls_off"]))
+    sh = shift or (0.0, math.exp(v["ls_on"]), 0.0, math.exp(v["ls_off"]))
+    lw_on = grid_logw(v["a_on"] + v["b_on"] * si + sh[0], sh[1])
+    lw_off = grid_logw(v["a_off"] + v["b_off"] * si + sh[2], sh[3])
     lw_n = grid_logw(v["mu_n"], math.exp(v["ls_n"]))
     tc = m.cutoff; nT = tc + 1                                    # tau slots 0..tc (tau = tc: only the predicted tick is flipped)
     sigp = 1 / (1 + np.exp(-(GRID + gam))); sigm = 1 / (1 + np.exp(-(GRID - gam)))
@@ -316,7 +443,7 @@ def machine_posterior(m, H, want_pred=True):
         # cutoff-tick inputs (possibly missing -> average over the unknown bits)
         gs = [0] if len(G) == 0 else None
         if gs is None:
-            vals = [m.w[tc - q] for q in G]
+            vals = [a[tc - lg] for a, lg in (inp(m, q) for q in G)]
             gs = [int(np.bitwise_xor.reduce(np.array(vals)))] if min(vals) >= 0 else [0, 1]
         bs = [int(m.big[tc - l])] if m.big[tc - l] >= 0 else [0, 1]
         # cumulative counts by tau: cum[tau, g, b, (n, k)] = counts over usable ticks < tau
@@ -374,6 +501,11 @@ def machine_posterior(m, H, want_pred=True):
                 out[0] += wt * (1 - q); out[1:] += wt * q * V[bb ^ d]
             continue
         bs, gs, d, e, p, pon_nf, poff_nf, pon, poff = item
+        if moments is not None:
+            for nm, pnf, pf in (("on", pon_nf, pon), ("off", poff_nf, poff)):
+                for k, G_ in (("1", GRID), ("2", GRID ** 2)):
+                    moments[nm + k] = moments.get(nm + k, 0.0) + Wt[ci, 0] * float(pnf @ G_) + float((Wt[ci, 1:] * (pf @ G_)).sum())
+            moments["w"] = moments.get("w", 0.0) + float(Wt[ci].sum())
         for bb in bs:
             sg = sigp if (bb ^ e) else sigm
             for gg in gs:
@@ -385,6 +517,11 @@ def machine_posterior(m, H, want_pred=True):
                 qw = wt_nf * q_nf + float((wt_f * q_f).sum())
                 out[1:] += qw * V[bb ^ d]
     out = np.maximum(out, 0); out /= out.sum()
+    if moments is not None and moments.get("w", 0) > 1e-9:
+        W = moments["w"]
+        for nm, mu0 in (("on", v["a_on"] + v["b_on"] * si), ("off", v["a_off"] + v["b_off"] * si)):
+            e1 = moments[nm + "1"] / W; e2 = moments[nm + "2"] / W
+            moments[nm] = (e1 - mu0 - (sh[0] if nm == "on" else sh[2]), max(e2 - e1 * e1, 1e-6))
     return ev_tau, out
 
 
