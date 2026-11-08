@@ -3,6 +3,26 @@
 Ledger of hypotheses, tests and verdicts. Newest at the top. Each entry: hypothesis, test, numbers, verdict, why.
 Reverts stay here as negative results. See CONTROL.md for the keep rule.
 
+## Entry 16: pooling our shared-base model with Adi's cook (his round-14 recipe): best validation score so far, but the increment over ours is small and not distinguishable
+
+**Source.** Adi's round 14 (origin/main `ed85b6b`): a fixed 50/50 linear pool of v8 and his standard-library `adi.cook` (r2 inner, adi size coupling, size menu) gives 58.337 / 58.321 / 58.327 (tuning / audit / full), saved as a checkpoint entry that reruns in 132 s. He did not pool our shared-base model. Run here from a scratch copy of `main` (his files untouched): `experiments/run_cook_main.py`, 1069 s for fit + validation + test.
+**Sanity (reproduces his numbers):** cook alone tuning 58.318, v8 + cook pool tuning 58.338, full 58.328 (his 58.327). Weight fixed at 0.5 in advance (not tuned; tuning-half weights .25 / .5 / .75 give 58.348 / 58.361 / 58.358, flat).
+
+| model | tuning | audit (consumed, info only) | full (kit scorer) | stable | short | drift | shared |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| v8 baseline | 58.311 | 58.289 | 58.2981 | .01704 | .05671 | .02242 | .02060 |
+| v8 + shared-base (ours) | 58.338 | 58.378 | 58.3547 | .01548 | .05485 | .02290 | .01955 |
+| adi.cook | 58.318 | 58.279 | 58.2973 | .01861 | .05507 | .02275 | .02041 |
+| v8 + cook pool (Adi's recipe) | 58.338 | 58.322 | 58.3281 | .01754 | .05501 | .02212 | .01998 |
+| **shared-base + cook pool (new)** | **58.361** | 58.382 | **58.3689** | .01662 | .05387 | .02223 | .01906 |
+| new pool vs ours | +0.024 | +0.004 | +0.0142 | +7.4% | -1.8% | -2.9% | -2.5% |
+
+Kit scorer on the pool: 58.368919 / 60. Paired episode bootstrap (96 validation episodes): pool vs ours +0.014, 95% CI [-0.033, +0.061], P(better) .72, better in 51 of 96 episodes (tuning half alone: +0.024, CI [-0.034, +0.082], P .80);
+pool vs plain v8 +0.071, 95% CI [+0.013, +0.136], P .993. Pooling adds about +0.03 on top of v8 but only about +0.014 on top of ours: the two gains overlap (about 80% additive: 0.057 + 0.030 predicted, 0.071 observed).
+Stable gets worse (cook is weaker there: .0186 vs .0155); short, drift and shared improve. A condition-gated pool was already falsified by Kareem (#42, #43), so the weight stays fixed.
+**Verdict.** The pool is the best validation score so far (58.3689) and is credibly better than plain v8, but the increment over our shared-base model alone is inconclusive and below the +0.05 tuning bar set in advance, so it is NOT adopted on its own evidence; it is consistent with Adi's independent +0.03.
+**Not done / risks.** No pooled checkpoint entry exists for this combination: cook patches `adi.gate` / `GateSizes` in-process and our folder's gate carries the xsg and optional state-shift edits (`_split_mixture` is touched by both), so combining them in one process needs an isolation and identity check (about 1-2 h); cook alone took 1069 s here (Adi: 527 s).
+
 ## Entry 15: win-informed size direction (the one approved experiment): STOP by the pre-stated rule; effect real in direction, too small to adopt
 
 **Idea.** Win outcomes carry information about the size direction d (win rate differs by size state, shift gamma = .46 / .53 / .30), but the size model updates d from sizes only; win history reaches it only through the lag prior P(k).

@@ -8,3 +8,6 @@ experiments/synth_*/
 experiments/gm_sb.pkl
 build/
 experiments/wd_rows.pkl
+experiments/pred_cook_valid.pkl
+experiments/test_cook.csv
+experiments/validation_sbcook.csv
