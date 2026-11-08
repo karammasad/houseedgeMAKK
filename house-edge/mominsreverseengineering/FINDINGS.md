@@ -3,6 +3,61 @@
 Ledger of hypotheses, tests and verdicts. Newest at the top. Each entry: hypothesis, test, numbers, verdict, why.
 Reverts stay here as negative results. See CONTROL.md for the keep rule.
 
+## Entry 7: hierarchy fits and the prefix diagnostic (train only, cross-fitted): NOT PROVEN, comparison is biased toward the alternative
+
+**Seven population fits** (`hierarchy.py`, 768 machines, rates integrated out on a logit grid; log-likelihoods A -19269.7, B -19268.4,
+C -19244.1, D -19243.0, E -19241.4, F -19258.2, G -19261.8). Numerical validity: A and B hit the iteration limit; C ended BELOW nested D and E
+(impossible at a true optimum, so C is stuck); boundary solutions in the full fits: HA jackpot-off strength 400 (my bound), HC steady-on sigma and
+jackpot-off sigma at the .15 lower bound, correlation rho at its bound (tanh .995) for balanced and steady, HD steady rho at its bound. Convergence
+flags were NOT recorded for the 12 cross-fitted fits. So the seven models are NOT ranked; only coarse conclusions are drawn: on-cell Beta
+strengths 62-182 (v8's grid-capped 25-100), spread and signal slopes not rejected as shared across types, size shift per type, rho unverified.
+
+**Prefix diagnostic** (`prefixdiag.py`: 576 long machines, 8,464 pseudo-queries, targets = realized wins at ticks 45-58% of the log, inputs only before
+the target, priors cross-fitted over 4 episode-grouped folds; V0 = v8 production gate; H* = grid predictors with shared base rate + size shift):
+paired Brier difference vs V0 (x1e-4, negative = better than V0; 95% CI clustered by episode)
+
+| information | V0 Brier | HA | HC | HD |
+| --- | --- | --- | --- | --- |
+| n10 | 1478.6 | -7.7 [-13.1, -1.8] | -8.1 [-13.8, -2.2] | -8.4 [-14.2, -2.4] |
+| n20 | 936.6 | -5.2 [-11.4, +0.3] | -5.5 [-11.9, +0.4] | -5.8 [-12.0, +0.1] |
+| n40 | 880.4 | -7.4 [-13.4, -1.6] | -7.4 [-13.6, -1.1] | -8.5 [-14.5, -2.7] |
+| n80 | 884.1 | -21.8 [-31.1, -13.0] | -21.5 [-30.9, -12.7] | -23.0 [-32.4, -14.0] |
+| short64 | 891.3 | -21.4 [-29.6, -13.9] | -21.5 [-29.7, -13.6] | -22.6 [-30.6, -15.0] |
+| full | 878.8 | -22.9 [-31.1, -14.7] | -21.5 [-29.5, -13.3] | -22.8 [-30.8, -14.6] |
+
+short64 by type (HA / HC / HD): balanced -17.6 / -18.5 / -19.4; jackpot -37.8 / -38.4 / -39.5; steady -12.5 / -11.4 / -12.6.
+ORACLE columns (structure fixed to the full-history MAP pair; NOT deployable): V0o short64 -10.0 [-16.9, -3.5], HCo -27.3. The V0o numbers at n10 / n20
+(-523 / -61) are implausibly large and were not investigated; do not use them.
+Decomposition of V0's short64 Brier (V0 vs itself, so unaffected by the confound below): data scarcity +12.5, structure ambiguity +10.0 (x1e-4).
+
+**Why this is NOT a result.**
+1. The comparison favors H by construction. H has no flip model; my window is flip-free by construction (flips sit near 68% of the cutoff), but V0
+   carries its flip prior: .5 when it classifies the log as long, .05 when short. By adi's rule ("short" = more than half the ticks missing) n10 / n20 / n40
+   are short (flip prior .05) while n80, full and about half of short64 (t below ~128 with 64 observed) are LONG (flip prior .5). The pattern fits: the
+   long-classified rows show -21 to -23, the short-classified ones -5 to -8. This is an inference from the logic; the rows were not saved, so I did NOT verify it.
+2. Plausibility: a -22.9e-4 gain at FULL history is about half the entire five-class squared error of a stable machine on validation (about .0035-.0041),
+   and it appears at full information where priors should matter least. That is not credible as a real prior effect.
+3. H is not deployable as built: no change-point model, hardcoded pairs (1,3), (2,5), (4,7), size lag = smaller lag, 45% window, 2-state direction mixture.
+4. The diagnostic cannot separate tighter priors from the size shift from the shared base rate from rho: every H variant includes all of them.
+**Verdict: NO-GO for a tuning evaluation as it stands.** The cleanest signals are the short-classified rows (n10, n40: about -7 to -8 with CIs excluding 0),
+which are the least affected by the flip handicap, but they are not yet shown to survive a fair V0.
+Single cheap fix (not run): rerun V0 only with its flip prior set to ~0 in this window (about 3 ms x 50k predictions), then compare again.
+
+## Entry 6: state_shift (Entry 4's extension) built and scored in full: REJECTED
+
+Gate-only fit chose gamma = 0.4 / 0.6 / 0.4 (balanced / jackpot / steady) with train log-evidence gains +47.5 / +90.3 / +18.5, peaked
+and unimodal. The full v8 score then went DOWN (the run had already finished when the pivot said not to launch it; recorded as is):
+
+| run | tuning | audit | full | stable | short | drift | shared |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| v8 baseline | 58.3107 | 58.2885 | 58.2981 | .01704 | .05671 | .02242 | .02060 |
+| B: state_shift on | 58.2594 | 58.2667 | 58.2609 | .01568 | .05735 | .02414 | .02223 |
+
+Change: tuning -0.051, audit -0.022, full -0.037. Stable improved (-8%); short, drift and shared got worse. Both halves fell, so the decision
+does not rest on the audit number. Lesson: a clean train-evidence gain (up to +90 nats) did not transfer to squared error, and the model
+(shift on both sides, big-vs-rest grouping, structure prior NOT relearned under the shift) is mis-specified somewhere. Not adopted.
+Code stays in the copy as an off-by-default option (`state_shift=False`); nesting at gamma = 0 verified to 3e-14.
+
 ## Entry 5: sign-tie experiment (Entry 4) RUN: INCONCLUSIVE, underpowered (neither confirmed nor falsified)
 
 `python3 signtie.py --data ../data/main` (train histories only, 192 stable machines, no targets, no audit). Two runs, both reported:

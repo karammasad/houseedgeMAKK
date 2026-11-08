@@ -18,6 +18,7 @@ from adi.model import Model as AdiModel
 from method2_sizes.sizes import GateSizes
 from method4_ml.pooled import pooled_split
 from method4_ml.signal_shift import attach_signal_shift
+from method4_ml.state_shift import attach_state_shift
 from method4_ml.features3 import episode_examples
 from method4_ml.size_hmm import SizeHMM
 from method4_ml.size_menu import fit_menu, snap
@@ -78,9 +79,11 @@ class GateInit:
 
 class Model:
     def __init__(self, variant="v3", stack="hgb", n_estimators=150, max_depth=3, subsample=0.8, K=6, K_short=6, t_min=100, splits="all", lr=0.03, max_leaf_nodes=15,
-                 min_samples_leaf=1000, l2=1.0, max_iter=400, seeds=3, blend=0.4, sizes="gate", gate=None, size_kw=None, size_pool="train", signal_shift=True, size_feat=True, size_stack=False, size_blend=0.5, tick_seed=0, bags=5, lr_weight=0.5, lr_spec=("d", "chg"), lr_l2=1.0, cshift=0.0, cs_clip=10.0, size_menu=True, menu_k=32,
+                 min_samples_leaf=1000, l2=1.0, max_iter=400, seeds=3, blend=0.4, sizes="gate", gate=None, size_kw=None, size_pool="train", signal_shift=True, size_feat=True, size_stack=False, size_blend=0.5, tick_seed=0, bags=5, lr_weight=0.5, lr_spec=("d", "chg"), lr_l2=1.0, cshift=0.0, cs_clip=10.0, size_menu=True, menu_k=32, state_shift=False,
                  workers=None, cache=True, **v1kw):
         self.variant = variant
+        self.state_shift = state_shift   # mominsreverseengineering: shared size-state shift on the size-split cells (state_shift.py)
+        self.fver = FEATURE_VERSION + ("+ss" if state_shift else "")
         if variant == "v1":
             from method4_ml.baseline import Model as V1
             self.v1 = V1(**v1kw); return
@@ -104,19 +107,21 @@ class Model:
 
     # ---------- gate model (fit on train, cached) ----------
     def _fit_gate(self, pub):
-        path = _cache_path("gate", os.path.abspath(pub), json.dumps(self.gate_kw, sort_keys=True), self.signal_shift, FEATURE_VERSION)
+        path = _cache_path("gate", os.path.abspath(pub), json.dumps(self.gate_kw, sort_keys=True), self.signal_shift, self.fver)
         gm = _load(path) if self.cache else None
         if gm is None:
             gm = AdiModel(**self.gate_kw).fit(pub)
             if self.signal_shift:      # signal-dependent cell priors, learned by marginal likelihood on train histories
                 attach_signal_shift(gm, *pooled_split(pub, ("train",)))
+            if self.state_shift:       # shared size-state shift, learned per type on train histories (no labels)
+                attach_state_shift(gm, *pooled_split(pub, ("train",)))
             if self.cache:
                 _save(path, gm)
         return gm
 
     def _fit_sizes(self, pub, gm):
         path = _cache_path("sizes", os.path.abspath(pub), json.dumps(self.gate_kw, sort_keys=True), self.signal_shift,
-                           json.dumps(self.size_kw, sort_keys=True), self.size_pool, FEATURE_VERSION)
+                           json.dumps(self.size_kw, sort_keys=True), self.size_pool, self.fver)
         g = _load(path) if self.cache else None
         if g is None:
             q, seq = pooled_split(pub, self.size_pool)     # histories only (train, optionally + validation/test)
@@ -129,7 +134,7 @@ class Model:
     def _features(self, pub, split, queries=False):
         path = _cache_path(os.path.abspath(pub), split, queries, self.K, self.K_short, self.t_min, self.tick_seed if not queries else 0,
                            json.dumps(self.gate_kw, sort_keys=True), self.signal_shift, self.size_feat,
-                           json.dumps(self.size_kw, sort_keys=True), FEATURE_VERSION)
+                           json.dumps(self.size_kw, sort_keys=True), self.fver)
         hit = _load(path) if self.cache else None
         if hit is not None:
             return hit
@@ -192,7 +197,7 @@ class Model:
         self.menu = None
         if self.size_menu and "gate" in self.size_models:     # exact two-state size menu, learned from HISTORY ticks only
             path = _cache_path("menu", os.path.abspath(pub), json.dumps(self.gate_kw, sort_keys=True), self.signal_shift,
-                               json.dumps(self.size_kw, sort_keys=True), self.size_pool, tuple(splits), self.menu_k, FEATURE_VERSION)
+                               json.dumps(self.size_kw, sort_keys=True), self.size_pool, tuple(splits), self.menu_k, self.fver)
             self.menu = _load(path) if self.cache else None
             if self.menu is None:
                 self.menu = fit_menu(pub, splits, self.size_models["gate"], self.menu_k, self.workers)

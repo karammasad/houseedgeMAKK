@@ -50,7 +50,7 @@ def _cell_mixture(nz, kz, zc, cp):
     (win rate ~ Beta(a_on, b_on)), the other the 'off' cell. Which one is on is unknown, so average both
     assignments 50/50 (keeps the model symmetric, so polarity flips still just swap cells).
     Returns (log marginal likelihood, P(win) for cell zc, or for an unknown cell if zc is None)."""
-    a1, b1, a0, b0 = cp
+    a1, b1, a0, b0 = cp[:4]
     def part(c, a_, b_):
         return betaln(kz[c] + a_, nz[c] - kz[c] + b_) - betaln(a_, b_)
     lA = part(0, a1, b1) + part(1, a0, b0)  # cell 0 on
@@ -78,36 +78,56 @@ def _split_flip(c):
     return (c + 3) % 6  # swap the XOR side, keep the size category
 
 
+def _sh(a, b, d):
+    """Shift the Beta mean by d on the log-odds scale, strength kept."""
+    if d == 0.0:
+        return a, b
+    k = a + b; m = min(max(a / k, 1e-6), 1 - 1e-6)
+    m = 1 / (1 + math.exp(-(math.log(m / (1 - m)) + d)))
+    return m * k, (1 - m) * k
+
+
 def _split_mixture(nz, kz, zc, cp, a=.5, b=.5):
     """Size-split gate ("xs"): 6 cells = XOR side (0/1) x payout category at the split lag (loss/1x/big).
     With cp = (a_on, b_on, a_off, b_off), the three sub-cells on the 'on' side use the on prior and the
     others the off prior, averaged 50/50 over which side is on (as in _cell_mixture). Each sub-cell has its
-    own rate, so a machine whose win rate depends on its hidden size state can express it."""
+    own rate, so a machine whose win rate depends on its hidden size state can express it.
+    STATE SHIFT (mominsreverseengineering): if cp has a 5th element gamma > 0, each sub-cell's prior mean is shifted by
+    +-gamma on the log-odds scale: ONE hidden binary size state (big category vs the other two, direction d unknown,
+    averaged 50/50) moves every sub-cell the same way on both sides. gamma = 0 reproduces the exchangeable prior exactly."""
     if cp is None:
         cp = (a, b, a, b)
-    a1, b1, a0, b0 = cp
-    def part(c, a_, b_):
-        return betaln(kz[c] + a_, nz[c] - kz[c] + b_) - betaln(a_, b_) if nz[c] else 0.0
-    lA = sum(part(c, a1, b1) for c in range(3)) + sum(part(c, a0, b0) for c in range(3, 6))
-    lB = sum(part(c, a0, b0) for c in range(3)) + sum(part(c, a1, b1) for c in range(3, 6))
-    m = max(lA, lB); wA = math.exp(lA - m); wB = math.exp(lB - m); s = wA + wB
-    ll = m + math.log(s / 2)
-    def rate(c, on):
-        a_, b_ = (a1, b1) if on else (a0, b0)
-        return (kz[c] + a_) / (nz[c] + a_ + b_)
+    a1, b1, a0, b0 = cp[:4]; gam = cp[4] if len(cp) > 4 else 0.0
+    comps = []
+    for assign in (0, 1):                       # assign 0: side 0 is the 'on' side
+        for d in ((0, 1) if gam else (0,)):
+            ll_ = 0.0; pri = []
+            for c in range(6):
+                on = (c < 3) == (assign == 0)
+                sig = 1 if ((c % 3 == 2) != (d == 1)) else -1
+                pa, pb = _sh(*((a1, b1) if on else (a0, b0)), gam * sig)
+                pri.append((pa, pb))
+                if nz[c]:
+                    ll_ += betaln(kz[c] + pa, nz[c] - kz[c] + pb) - betaln(pa, pb)
+            comps.append((ll_, pri))
+    m = max(l for l, _ in comps); ws = [math.exp(l - m) for l, _ in comps]; s = sum(ws)
+    ll = m + math.log(s / len(comps))
+    def rate(c, pri):
+        pa, pb = pri[c]
+        return (kz[c] + pa) / (nz[c] + pa + pb)
     if zc is None:
         n = sum(nz); f = [(nz[c] + 1 / 6) / (n + 1) for c in range(6)]
-        pA = sum(f[c] * rate(c, c < 3) for c in range(6)); pB = sum(f[c] * rate(c, c >= 3) for c in range(6))
+        ps = [sum(f[c] * rate(c, pri) for c in range(6)) for _, pri in comps]
     else:
-        pA = rate(zc, zc < 3); pB = rate(zc, zc >= 3)
-    return ll, (wA * pA + wB * pB) / s
+        ps = [rate(zc, pri) for _, pri in comps]
+    return ll, sum(w * p for w, p in zip(ws, ps)) / s
 
 
 def _group_mixture(nz, kz, zc, cp, a=.5, b=.5):
     """Like _split_mixture for any even number of cells: first half = XOR side 0, second half = side 1."""
     if cp is None:
         cp = (a, b, a, b)
-    a1, b1, a0, b0 = cp; h = len(nz) // 2
+    a1, b1, a0, b0 = cp[:4]; h = len(nz) // 2
     def part(c, a_, b_):
         return betaln(kz[c] + a_, nz[c] - kz[c] + b_) - betaln(a_, b_) if nz[c] else 0.0
     lA = sum(part(c, a1, b1) for c in range(h)) + sum(part(c, a0, b0) for c in range(h, 2 * h))

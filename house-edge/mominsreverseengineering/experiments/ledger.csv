@@ -1,3 +1,4 @@
 time,name,method,kwargs,tuning,audit,full,stable,short,drift,shared,seconds
 2026-11-07 22:56,v8 baseline,method4_ml,{},58.3107,58.2885,58.2981,0.01704,0.05671,0.02242,0.0206,1197.2
 2026-11-07 23:12,A gate max_lag 8 (lags<=8),method4_ml,"{""gate"":{""max_lag"":8,""and_pairs"":true,""prior_flips"":true,""prune"":0.01,""floor"":0.05,""cell_prior"":""learn"",""cell_group"":""type"",""p_change_short"":""learn"",""sizes"":""npmle"",""size_split"":true}}",58.3107,58.2885,58.2981,0.01704,0.05671,0.02242,0.0206,966.4
+2026-11-07 23:46,B state_shift (shared size-state shift),method4_ml,"{""state_shift"": true}",58.2594,58.2667,58.2609,0.01568,0.05735,0.02414,0.02223,803.5

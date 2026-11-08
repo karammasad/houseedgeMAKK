@@ -39,7 +39,9 @@ def cmd_score(a):
     m = importlib.import_module(a.method + ".model").Model(**json.loads(a.kwargs)).fit(pub)
     pred = m.predict(pub, "validation"); secs = time.time() - t0
     tune, audit = folds(pub)
-    tp = points(pub, pred, tune)[0]; ap = points(pub, pred, audit)[0]; fp, fr = points(pub, pred)
+    with open(os.path.join(pub, "metadata.json")) as fh:   # point scale comes from THIS kit's metadata (60/40 or 80/20); ratios are scale-free
+        maxp = float(json.load(fh).get("max_points", 60))
+    tp = points(pub, pred, tune, maxp)[0]; ap = points(pub, pred, audit, maxp)[0]; fp, fr = points(pub, pred, None, maxp)
     row = dict(time=datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), name=a.name, method=a.method, kwargs=a.kwargs,
                tuning=round(tp, 4), audit=round(ap, 4), full=round(fp, 4),
                stable=round(fr["stable"], 5), short=round(fr["short_history"], 5), drift=round(fr["drift"], 5),
