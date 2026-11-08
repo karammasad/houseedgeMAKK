@@ -3,6 +3,18 @@
 Ledger of hypotheses, tests and verdicts. Newest at the top. Each entry: hypothesis, test, numbers, verdict, why.
 Reverts stay here as negative results. See CONTROL.md for the keep rule.
 
+## Entry 13: deployment feasibility (official 2-core / 30-minute rerun): MARGINAL as packaged; a saved checkpoint is the fix
+
+**Official limits** (`kit/README.md`, `RULES.md`, `SUBMISSION_README.md`): 30 minutes, two CPU cores, 16 GiB RAM, no network, `/tmp` 128 MiB, `/output` 32 MiB, output within 1e-8 of the submitted CSV.
+They apply ONLY to the organizers' offline rerun of the packaged `reproduce.json` command, which checks prize contenders after the cutoff. The score comes from the uploaded CSV. No runner code ships in the kit.
+**Existing log:** Kareem measured plain v8 cold on 2 workers / 2 BLAS threads at 1104 s (his machine); his widened-gate v8 took 1516 s and his 58.314 pool about 38 min, both rejected on runtime.
+**One test** (`experiments/deploy_test.py`; fresh fit, cache off, test predictions, 2 workers, 2 BLAS/OpenMP threads, hard kill at 29 min; macOS has no CPU affinity, so cores are limited by thread/worker counts):
+v8 + shared-base finished in **1632 s (27.2 min)**, margin 2.8 min (9%). Stages: feature building 1098 s (67%), size-menu fit 260 s, gate fit 222 s, test predict 32 s, size model 21 s, shared-base structure fit 16 s.
+CPU-seconds 2980 (so no 2-core machine can beat about 1490 s). Peak memory about 0.24 GB main process, 0.10 GB largest worker (the printout mislabelled MB as GB). Output identical to the 8-thread run (max difference 0.0).
+**Not measured:** plain v8 on THIS machine at 2 cores (so the shared-base overhead cannot be separated from machine speed: Kareem's 1104 s on his machine versus 1632 s here); the pinned dependency versions (local scikit-learn 1.8.0 / numpy 2.4.4 / scipy 1.17.1 vs pins 1.9.1 / 2.1.3 / 1.18.1).
+**Verdict:** under the limit here, but with a margin too thin to rely on the organizers' hardware being as fast. The packaged entry also sets `workers` from the detected core count (capped at 8), which oversubscribes a 2-core container that reports host cores.
+**Minimal fixes that do not change predictions (not implemented):** (1) force `workers=2` and 2 BLAS/OpenMP threads in `predict.py`; (2) ship a saved fitted model and load it in `predict.py` (the guide endorses "load a saved checkpoint"): rerun time falls to about a minute, predictions byte-identical, requirements must pin the exact versions used to save it.
+
 ## Entry 12: trust audit of v8 + shared-base (leakage, overfitting, reproduction): leakage PASS; improvement INCONCLUSIVE, leaning mildly positive
 
 **Audit status: the audit half is CONSUMED.** Candidate frozen first (predictions saved 00:53, committed 00:55 as 178bba6, ledger row had audit/full blank), then audit/full were computed once on request. Do not tune, route or blend using audit results.
