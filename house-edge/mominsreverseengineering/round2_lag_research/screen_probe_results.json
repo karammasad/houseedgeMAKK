@@ -1,0 +1,115 @@
+[
+  {
+    "scenario": "unchanged",
+    "seed": 73301,
+    "episodes": 32,
+    "actual_rare_count": 0,
+    "screen_pair_mass": 3.95563710724647e-05,
+    "screen_true_size_lag_mass": 5.014619386936061e-06,
+    "kept_size_lags": [],
+    "retains_rare_pair": false,
+    "retains_correct_combination": false,
+    "retained_components": 8,
+    "screen_discarded_mass": 0.049098830109575956
+  },
+  {
+    "scenario": "unchanged",
+    "seed": 73302,
+    "episodes": 32,
+    "actual_rare_count": 0,
+    "screen_pair_mass": 3.8003752228707135e-05,
+    "screen_true_size_lag_mass": 4.741629197005524e-06,
+    "kept_size_lags": [],
+    "retains_rare_pair": false,
+    "retains_correct_combination": false,
+    "retained_components": 12,
+    "screen_discarded_mass": 0.0054414804291798525
+  },
+  {
+    "scenario": "unchanged",
+    "seed": 73303,
+    "episodes": 32,
+    "actual_rare_count": 0,
+    "screen_pair_mass": 3.656017096907561e-05,
+    "screen_true_size_lag_mass": 4.594526810193142e-06,
+    "kept_size_lags": [],
+    "retains_rare_pair": false,
+    "retains_correct_combination": false,
+    "retained_components": 13,
+    "screen_discarded_mass": 0.05301953084397098
+  },
+  {
+    "scenario": "unchanged",
+    "seed": 73304,
+    "episodes": 32,
+    "actual_rare_count": 0,
+    "screen_pair_mass": 3.614426359585965e-05,
+    "screen_true_size_lag_mass": 4.513547440074197e-06,
+    "kept_size_lags": [],
+    "retains_rare_pair": false,
+    "retains_correct_combination": false,
+    "retained_components": 10,
+    "screen_discarded_mass": 0.025791111955780696
+  },
+  {
+    "scenario": "shifted_5pct",
+    "seed": 73301,
+    "episodes": 32,
+    "actual_rare_count": 11,
+    "screen_pair_mass": 0.04540486261578017,
+    "screen_true_size_lag_mass": 0.02609211115515998,
+    "kept_size_lags": [
+      3,
+      2
+    ],
+    "retains_rare_pair": true,
+    "retains_correct_combination": true,
+    "retained_components": 10,
+    "screen_discarded_mass": 0.010164826700040598
+  },
+  {
+    "scenario": "shifted_5pct",
+    "seed": 73302,
+    "episodes": 32,
+    "actual_rare_count": 9,
+    "screen_pair_mass": 0.024317676758738156,
+    "screen_true_size_lag_mass": 0.011410600709572347,
+    "kept_size_lags": [
+      3
+    ],
+    "retains_rare_pair": true,
+    "retains_correct_combination": true,
+    "retained_components": 9,
+    "screen_discarded_mass": 0.03153486678649275
+  },
+  {
+    "scenario": "shifted_5pct",
+    "seed": 73303,
+    "episodes": 32,
+    "actual_rare_count": 14,
+    "screen_pair_mass": 0.0548461106143595,
+    "screen_true_size_lag_mass": 0.05102287708985524,
+    "kept_size_lags": [
+      3
+    ],
+    "retains_rare_pair": true,
+    "retains_correct_combination": true,
+    "retained_components": 9,
+    "screen_discarded_mass": 0.009219406597414243
+  },
+  {
+    "scenario": "shifted_5pct",
+    "seed": 73304,
+    "episodes": 32,
+    "actual_rare_count": 14,
+    "screen_pair_mass": 0.04901489878626661,
+    "screen_true_size_lag_mass": 0.03212195314461583,
+    "kept_size_lags": [
+      3
+    ],
+    "retains_rare_pair": true,
+    "retains_correct_combination": true,
+    "retained_components": 11,
+    "screen_discarded_mass": 0.04067257601275185
+  }
+]

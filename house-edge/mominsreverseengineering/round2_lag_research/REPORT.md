@@ -1,0 +1,37 @@
+# Thanos lag-population research (pinned 8e00a50)
+
+## Decision
+
+Keep frozen Thanos E2 as the candidate and preserve `deploy_thanos/entry.zip` on the latest remote as the fallback. No model change is supported by the present evidence. No official Round 1 validation or audit targets were used in this investigation. We did not run heavy model fits, predictive Brier experiments, package construction, or a new submission.
+
+## Mechanism and math
+
+`thanos/egp.py` `ALL_GATES` defines 1 no-gate, 8 singles and 28 unordered own-win XOR pairs, each combined with all 8 size lags = 296 structures. `screen` evaluates win and size evidence on a common usable-tick set; it uses independent Beta(1,1) win cells and Dirichlet(1,1,1,1) size counts, then 60 responsibility updates with 0.001 pseudocount per structure, and retains only structure/size-lag entries with estimated mass >= 0.01. `window_end` uses first 45% of long histories and all observed short histories as approximately flip-free.
+
+`fit_hyper` fits per-type continuous parameters and alternates three continuous fits with 40 mixture-prior updates each. For machine m, structure k and latent d,e,p, the normalized responsibility is proportional to pi[k] exp(T_m(k,d,e,p)); pi[k] becomes (sum_m posterior_m(k) + .01)/(M + .01 K). The joint direction table gets .5 per entry. The same global pi is used across all types and episodes, and the update sums per machine, not per episode. Machines sharing an episode are not independently sampled if the generator induces episode-level dependence; no such structure has been reliably established on main.
+
+`machine_posterior` computes weights proportional to pi[k] P(d,e) P(p) P(tau|shape) times the per-machine win-and-size evidence, integrating logit rates on the fixed grid [-9,7] step .2. It averages predictions over retained structures, polarity and all change-time slots. The rate priors, per-type signal slopes, gamma and two 4-vectors per type are fitted from histories, as are the short/long no-flip probabilities and 20-bin flip-position histogram. At initialization pi/P(d,e)/flip histogram are uniform, orientation is 50/50, and no-flip probabilities begin .5 long/.1 short; these initial values should not be confused with final learned parameters. Fixed choices include XOR family and lag range, 1% support screen, smoothing constants, optimizer/grid limits, payout>=2 size state, two payout vectors per type, binary directions, one polarity flip, short criterion observed count < half cutoff, prefix choice, the 20-bin flip histogram and equal averaging of unavailable query-time inputs. `plugin_extra` uses estimated marginal frequencies for observations missing a candidate's lags; this is an approximation, so the full procedure is not a literally exact posterior for all missing-data cases.
+
+Thus a new kit with different pair frequencies is already refit: screen and population priors are estimated anew. Its posterior weights are conditional on fitted hyperparameters rather than integrating their uncertainty, and a pruned structure cannot be recovered downstream. Whether population-frequency variation by type, episode, or higher-level regime matters is a hypothesis, not a demonstrated fact.
+
+## Lightweight screening-only probe
+
+`screen_probe.py` reads the same EGP blob as 8e00a50 (verified git blob ID) via the prior `audit_thanos.GitCode` loader, and uses `experiments/synth_kit.py` to simulate training histories. Four random seeds, 32 episodes / 256 machines per set; unchanged condition has three pairs, shifted introduces a fourth pair (3,6) at 5% nominal. Three quarters of histories are full and one quarter use the 40+24 mask. These histories are generated without flips: the test isolates screening under an intentionally favorable model-like generator, not the whole adaptation problem. No target probabilities or held-out predictions are used.
+
+- Unchanged: correct absence of the new pair in all 4 screens; discarded total screen mass 0.5% to 5.3%.
+- Shifted: the new pair and its true size lag (3) were retained in all 4 screens; realized counts 9, 11, 14, 14 of 256; estimated pair mass 2.4%–5.5%.
+- Runtime 1.48 s on this machine (single numerical thread). Raw per-seed results: `screen_probe_results.json`.
+
+This does not establish predictive equivalence or a reliable selection probability; 4 synthetic replicates are too few, generated rates follow a simplified model, and no held-out Brier is computed. Previous team studies on a different simulator found weak recovery at 2%–5% shares, while the newer six-seed size-state-aware shift study retained its tested common structures with three, six and ten pairs. Main-train 2-fold widening was near zero difference (-0.000003 Brier, 95% CI [-0.000025,+0.000019]) with theta held fixed. Neither prior test estimates the predictive loss from a rare omitted pair on real round-two data. We have no evidence that a new population hierarchy or lower threshold delivers a usable gain, so the conditional heavy predictive comparison is not warranted and no adaptation was built.
+
+## Fallback status and deployment
+
+The latest fetched `origin/main` contains `house-edge/mominsreverseengineering/deploy_thanos/entry.zip` with manifest SHA-256 `c74794a4cd07f58bea0f2e69017ce948b20a24b90387657650b0b3d915527513`. This checkout did not modify or materialize it. Its verification document reports two offline, clean-folder read-only-source reruns on main with identical CSV SHA-256 `ef4482902504c4f113859b8852e399e080d04b6c56a0548dc5172711a8212e03`, 436–446s wall, 152–179 MB, valid 1,536-query format and only query/history inputs opened. It explicitly does not establish fresh-environment dependency installation/reproduction or an official 2-core container run. Average CPU usage or CPU seconds cannot guarantee runtime on a different or slower 2-core machine.
+
+On the actual new kit: confirm metadata and contest cutoff; use a fresh copy of the fallback and exact dependency environment, run it on that kit, record learned support/masses and inspect the 1% boundary on TRAIN histories; run the checker, then verify offline rerun against the exact candidate CSV to 1e-8 with read-only inputs, 2 cores, 16 GiB and 30 minutes. Treat unknown package compatibility or a failed check as unresolved; do not claim official acceptance. Use fresh validation data only for a predeclared decision if time allows; never hardcode new lag pairs from targets. If the window is short, finish and submit the verified fallback pair before considering a change.
+
+## Day-one screening diagnostic
+
+Run `python3 round2_lag_research/screen_summary.py --data /path/to/adaptation/public --out /path/to/new/screen.json` from the working folder. It reads only train queries and histories, calls the pinned screen without changing it, and reports retained combinations plus mass summed across each gate and discarded sub-threshold mass. It is descriptive: a low-mass candidate is not proven true, and no automatic model selection or threshold change is justified by its output. Do not include validation targets or labels in fit.
+
+Rehearsed on main TRAIN only: 96 episodes / 768 machines, 13 combinations retained, total discarded mass 0.0388; top gate masses (1,3) 0.357, (2,5) 0.328, (4,7) 0.314. Runtime 0.601 s on this machine. No official validation / audit outcome was read. The screen records mixture weights per machine, not effective independent episode counts.
