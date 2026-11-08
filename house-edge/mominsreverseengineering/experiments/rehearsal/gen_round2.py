@@ -53,7 +53,7 @@ def write(path, header, rows):
 def build(out, hidden, seed=20261108):
     rng = random.Random(seed); pub = os.path.join(out, "public"); counts = {"train": 24, "validation": 24, "test": 48}; pooled = {}; probs = [s[2] for s in STRUCT]
     for split, neps in counts.items():
-        Q, H, Lb, Cn, Tg = [], [], [], [], []; e = 0
+        Q, H, Lb, Cn, Tg = [], [], [], [], []; e = 0; META = []
         for cond in COND:
             for _ in range(neps):
                 eid = f"r2syn-{split}-e{e:05d}"; e += 1; cutoff = rng.randint(192, 256)
@@ -66,7 +66,7 @@ def build(out, hidden, seed=20261108):
                     pay, truth, outc = machine(rng, ty, sg, cutoff, tau, st); qid = f"{mid}-next"; Q.append([qid, eid, mid, ty, sg, cutoff])
                     keep = range(cutoff)
                     if cond == "short_history": keep = sorted(set(range(cutoff - 40, cutoff)) | set(rng.sample(range(0, cutoff - 40), 24)))
-                    H += [[eid, mid, t, pay[t]] for t in keep]; Lb.append([qid, outc]); Cn.append([qid, cond]); Tg.append([qid, eid, cond, ty] + truth + [outc])
+                    H += [[eid, mid, t, pay[t]] for t in keep]; Lb.append([qid, outc]); Cn.append([qid, cond]); Tg.append([qid, eid, cond, ty] + truth + [outc]); META.append([qid, str(st[0]), st[1], tau, cutoff])
                     if split == "train":
                         for v in pay: pooled.setdefault(ty, [0] * 5)[(0, 1, 2, 5, 20).index(v)] += 1
         d = os.path.join(pub, split)
@@ -76,6 +76,7 @@ def build(out, hidden, seed=20261108):
         if split == "validation":
             write(os.path.join(d, "targets.csv"), ["query_id", "episode_id", "p_0", "p_1", "p_2", "p_5", "p_20", "outcome"], [[t[0], t[1]] + t[4:] for t in Tg])
             write(os.path.join(d, "reference.csv"), ["query_id", "p_0", "p_1", "p_2", "p_5", "p_20"], [[r[0]] + [x / sum(pooled[r[3]]) for x in pooled[r[3]]] for r in Q])
+        write(os.path.join(hidden, f"meta_{split}.csv"), ["query_id", "gate", "size_lag", "tau", "cutoff"], META)
         write(os.path.join(hidden, f"truth_{split}.csv"), ["query_id", "episode_id", "condition", "type", "p_0", "p_1", "p_2", "p_5", "p_20", "outcome"], Tg)
     json.dump(dict(round="adaptation", max_points=40, synthetic=True, season_id="0" * 24, suite_version="experimentation-suite-v3", counts_per_condition=counts,
                    machines_per_episode=8, note="fresh synthetic Round 2 rehearsal"), open(os.path.join(pub, "metadata.json"), "w"))
