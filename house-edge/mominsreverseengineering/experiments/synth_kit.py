@@ -93,7 +93,7 @@ def build(out, menu, gamma, episodes, seed=11, slope=0.34, sigma=0.3, tag="synth
             for r in Q:
                 c = pooled[r[3]]; s = sum(c); ref.append([r[0]] + [x / s for x in c])
             write(os.path.join(d, "reference.csv"), ["query_id", "p_0", "p_1", "p_2", "p_5", "p_20"], ref)
-    json.dump(dict(round="synthetic", max_points=60, season_id="0" * 24, suite_version="experimentation-suite-v3", note="synthetic test kit",
+    json.dump(dict(round="adaptation", max_points=40, synthetic=True, season_id="0" * 24, suite_version="experimentation-suite-v3", note="synthetic test kit",
                    menu=[list(p) for p in menu], gamma=gamma), open(os.path.join(pub, "metadata.json"), "w"))
     return pub
 

@@ -3,6 +3,18 @@
 Ledger of hypotheses, tests and verdicts. Newest at the top. Each entry: hypothesis, test, numbers, verdict, why.
 Reverts stay here as negative results. See CONTROL.md for the keep rule.
 
+## Entry 11: the Round 2 selection rule was scoring the wrong objective; fixed (full-pipeline selection)
+
+Main-kit rehearsal of `adapt.py --stage select --no-guard` (audit untouched): 3 min 49 s; gate fit 205 s, structure fit 17 s; it CHOSE the new structure on its
+gate-level win-side metric (mean ratio -9.3%: stable -23%, short -4%, drift -1%, shared -15%). The full pipeline on the same kit gave only +0.027 tuning points
+with drift worse (Entry 10): v8's stacker and logistic correction already use the size state, so a gate-only comparison overstates the gain.
+Same on the synthetic changed kit: win-side -26% at the gate, but only +0.086 official tuning points (/40) for the full pipeline.
+Fix: `--stage full-select` runs plain v8 and v8 + structure as two full pipelines in parallel (4 workers each), chooses on the official tuning metric (margin
+0.05 points on a 60-point scale, scaled by the kit's max_points; no condition worse than 10%), one audit look after the choice; plain v8 is the fallback and is
+always produced. On main this rule keeps plain v8 (+0.027 < 0.05).
+Also fixed: a kit-checker failure crashed `final` and threw away a finished fit (found when the synthetic kit's metadata failed the checker); it is now reported
+in final.json (`checker_ok`) and the run continues. The synthetic kits now carry checker-valid metadata (round adaptation / 40, `synthetic: true`).
+
 ## Entry 10: integrated prototype (`xsg` structure in the v8 gate) through a real tuning evaluation: +0.027, NOT distinguishable from noise
 
 **Build.** `adi/gate.py` (our copy): new structure form `xsg` = the six cells of `xs` with ONE base rate per gate side (independent logit-normal priors,

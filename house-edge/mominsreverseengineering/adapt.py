@@ -94,23 +94,72 @@ def select(pub, out, guard_on=True):
     return res
 
 
-def final(pub, out, kwargs, data_arg):
-    t0 = time.time(); m = Model(cache=False, **kwargs).fit(pub); pred = m.predict(pub, "validation"); t1 = time.time()
+def final(pub, out, kwargs, data_arg, tuning_only=False, workers=None):
+    """Full v8 pipeline with `kwargs`. tuning_only: score the TUNING half only (used while comparing candidates; audit untouched)."""
+    import pickle
+    t0 = time.time(); kw = dict(kwargs, **({"workers": workers} if workers else {}))
+    m = Model(cache=False, **kw).fit(pub); pred = m.predict(pub, "validation"); t1 = time.time()
+    os.makedirs(out, exist_ok=True); pickle.dump(pred, open(os.path.join(out, "validation_pred.pkl"), "wb"))
     meta = json.load(open(os.path.join(pub, "metadata.json"))); maxp = float(meta.get("max_points", 60)); tune, audit = folds(pub)
-    tp, tr = points(pub, pred, tune, maxp); ap, ar = points(pub, pred, audit, maxp); fp, fr = points(pub, pred, None, maxp)
-    print(f"[final] fit + validation predict {t1 - t0:.0f}s; official metric (max_points {maxp:g}):  tuning {tp:.3f}  audit {ap:.3f}  full {fp:.3f}")
-    print("        full-validation ratios: " + "  ".join(f"{c} {fr[c]:.5f}" for c in CONDITIONS))
+    tp, tr = points(pub, pred, tune, maxp); res = dict(kwargs=kwargs, tuning=tp, tuning_ratios=tr)
+    print(f"[final {kwargs}] fit + validation predict {t1 - t0:.0f}s; official TUNING {tp:.4f}  " + "  ".join(f"{c} {tr[c]:.5f}" for c in CONDITIONS), flush=True)
+    if not tuning_only:
+        ap, _ = points(pub, pred, audit, maxp); fp, fr = points(pub, pred, None, maxp); res.update(audit=ap, full=fp, ratios=fr)
+        print(f"        audit {ap:.4f}  full {fp:.4f}  full ratios " + "  ".join(f"{c} {fr[c]:.5f}" for c in CONDITIONS))
     csv_path = os.path.join(out, "submission.csv"); write_predictions(csv_path, m.predict(pub, "test"))
-    subprocess.run([sys.executable, os.path.join(HERE, "..", "kit", "check_submission.py"), csv_path, "--data", pub], check=True)
-    print(f"[final] test CSV written and checked; total {time.time() - t0:.0f}s -> {csv_path}")
-    json.dump(dict(kwargs=kwargs, tuning=tp, audit=ap, full=fp, ratios=fr, seconds=round(time.time() - t0, 1)), open(os.path.join(out, "final.json"), "w"), indent=1)
+    chk = subprocess.run([sys.executable, os.path.join(HERE, "..", "kit", "check_submission.py"), csv_path, "--data", pub], capture_output=True, text=True)
+    res["checker_ok"] = chk.returncode == 0                      # a checker problem is REPORTED, never allowed to throw away a finished fit
+    if not res["checker_ok"]:
+        print(f"[final {kwargs}] WARNING kit checker failed: {(chk.stdout + chk.stderr).strip().splitlines()[-1:]}", flush=True)
+    res["seconds"] = round(time.time() - t0, 1); print(f"[final {kwargs}] test CSV written (checker ok={res['checker_ok']}); {res['seconds']}s -> {csv_path}", flush=True)
+    json.dump(res, open(os.path.join(out, "final.json"), "w"), indent=1, default=float)
+    return res
+
+
+FULL_MARGIN = 0.05   # official tuning points ON A 60-POINT SCALE the candidate must gain over plain v8 (scaled by max_points/60; halves differ by 0.02-0.19)
+
+
+def full_select(pub, out, data_arg, guard_on=True, workers=4):
+    """Run plain v8 and v8 + shared-base as two FULL pipelines in parallel; choose on the official TUNING metric; then ONE audit look for the choice."""
+    import pickle, shutil
+    t0 = time.time(); procs = {}
+    for name, flag in (("base", "base"), ("sb", "sb")):
+        cmd = [sys.executable, os.path.join(HERE, "adapt.py"), "--data", data_arg, "--out", os.path.join(out, name), "--stage", "final",
+               "--force", flag, "--tuning-only-final", "--workers", str(workers)]
+        procs[name] = subprocess.Popen(cmd, cwd=HERE)
+    for name, p in procs.items():
+        if p.wait() != 0:
+            print(f"[full-select] {name} FAILED (exit {p.returncode})")
+    R = {n: json.load(open(os.path.join(out, n, "final.json"))) for n in procs if os.path.exists(os.path.join(out, n, "final.json"))}
+    if "base" not in R:
+        sys.exit("plain v8 failed: no fallback produced")
+    choose = "base"
+    if "sb" in R:
+        gain = R["sb"]["tuning"] - R["base"]["tuning"]
+        worst = max(R["sb"]["tuning_ratios"][c] / R["base"]["tuning_ratios"][c] - 1 for c in CONDITIONS)
+        print(f"[full-select] TUNING official: base {R['base']['tuning']:.4f}  sb {R['sb']['tuning']:.4f}  gain {gain:+.4f}  worst condition {worst:+.1%}")
+        mp = float(json.load(open(os.path.join(pub, 'metadata.json'))).get('max_points', 60)); margin = FULL_MARGIN * mp / 60
+        print(f'[full-select] margin {margin:.4f} points (max_points {mp:g})')
+        if gain >= margin and worst <= WORSE:
+            choose = "sb"
+    meta = json.load(open(os.path.join(pub, "metadata.json"))); maxp = float(meta.get("max_points", 60)); tune, audit = folds(pub)
+    if guard_on:                                                    # ONE audit look, after the choice is frozen
+        pc = pickle.load(open(os.path.join(out, choose, "validation_pred.pkl"), "rb")); ap, _ = points(pub, pc, audit, maxp); fp, fr = points(pub, pc, None, maxp)
+        print(f"[full-select] chosen {choose}: audit {ap:.4f}  full {fp:.4f}")
+    shutil.copy(os.path.join(out, choose, "submission.csv"), os.path.join(out, "submission.csv"))
+    json.dump(dict(chosen=choose, kwargs=R[choose]["kwargs"], tuning={n: R[n]["tuning"] for n in R}, seconds=round(time.time() - t0, 1)),
+              open(os.path.join(out, "chosen.json"), "w"), indent=1)
+    print(f"[full-select] CHOSEN {choose} ({time.time() - t0:.0f}s) -> {os.path.join(out, 'submission.csv')}; package with kwargs {R[choose]['kwargs']}")
 
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--data", required=True); ap.add_argument("--out", required=True)
-    ap.add_argument("--stage", choices=("all", "select", "final"), default="all"); ap.add_argument("--force", choices=("base", "sb"))
+    ap.add_argument("--stage", choices=("all", "select", "final", "full-select"), default="all")
+    ap.add_argument("--tuning-only-final", action="store_true"); ap.add_argument("--workers", type=int); ap.add_argument("--force", choices=("base", "sb"))
     ap.add_argument("--no-guard", action="store_true", help="skip the single audit-half guard (rehearsals on a kit whose audit half must stay untouched)")
     a = ap.parse_args(); pub = public_dir(a.data); meta, have = kit_check(pub)
+    if a.stage == "full-select":
+        return full_select(pub, a.out, a.data, guard_on=not a.no_guard, workers=a.workers or 4)
     if a.force:
         res = dict(chosen=a.force, kwargs={"shared_base": True} if a.force == "sb" else {}); os.makedirs(a.out, exist_ok=True)
         json.dump(res, open(os.path.join(a.out, "chosen.json"), "w"))
@@ -123,7 +172,7 @@ def main():
     else:
         res = json.load(open(os.path.join(a.out, "chosen.json")))
     if a.stage in ("all", "final"):
-        final(pub, a.out, res["kwargs"], a.data)
+        final(pub, a.out, res["kwargs"], a.data, tuning_only=a.tuning_only_final, workers=a.workers)
 
 
 if __name__ == "__main__":

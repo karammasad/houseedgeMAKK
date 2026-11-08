@@ -45,12 +45,15 @@ Run the round-two script on main data first as a rehearsal. Before 9 PM Saturday
 ## Round two (adaptation), once the kit is out (90 minutes)
 
 1. Unzip the new kit into its own folder; copy its `public/` to `../data/adaptation/` (never over `../data/main/`).
-2. **Fallback first** (plain v8, about 17 min): `python3 adapt.py --data ../data/adaptation --out build/r2_base --force base`
-   -> `build/r2_base/submission.csv`, checked. Upload a fallback as soon as it exists (package it with step 5).
-3. **Select** (about 3-4 min): `python3 adapt.py --data ../data/adaptation --out build/r2 --stage select`
-   refits v8's gate, derives lag pairs from the fitted prior, fits the shared-base + size-shift structure, compares on the TUNING half (validation answers),
-   one audit-half guard, writes `build/r2/chosen.json`. Prints derived pairs, gamma per type, convergence and bound hits.
-4. **Final** (only if chosen = sb; about 17 min): `python3 adapt.py --data ../data/adaptation --out build/r2 --stage final`.
+2. **One command, fallback included** (about 20-30 min on 8 cores): `python3 adapt.py --data ../data/adaptation --out build/r2 --stage full-select`
+   runs plain v8 (`build/r2/base/`, the fallback, with its own checked CSV) and v8 + shared-base structure (`build/r2/sb/`) as two FULL pipelines in
+   parallel, chooses on the OFFICIAL tuning-half metric (candidate must gain >= 0.05 points on a 60-point scale, scaled to the kit, and no condition
+   worse than 10%), then looks at audit once for the choice, and copies the chosen CSV to `build/r2/submission.csv`.
+   If time is short, upload `build/r2/base/submission.csv` the moment it exists (package it with step 5, kwargs `{}`).
+3. Optional diagnosis (3-4 min): `python3 adapt.py --data ../data/adaptation --out build/r2_diag --stage select --no-guard` prints the derived pairs,
+   gamma per type, convergence and bound hits. Do NOT use its gate-level choice to decide: on main it chose the structure (-9% win-side) while the
+   full pipeline gained only +0.027 tuning points.
+4. A kit-checker problem is reported in the log and in final.json (`checker_ok`); it never discards a finished fit.
 5. **Package** the chosen configuration: `python3 -m method4_ml.make_entry --data ../data/adaptation --out build/r2_entry --kwargs "$(python3 -c "import json;print(json.dumps(json.load(open('build/r2/chosen.json'))['kwargs']))")"`
    and check its CSV equals the one from step 2 or 4. Upload `submission.csv` + `entry.zip` to the Adaptation Form.
 Tested: synthetic kits with changed lag pairs (adopts the structure) and with the size shift removed (falls back to v8); see FINDINGS Entry 10.
