@@ -78,7 +78,7 @@ class GateInit:
 
 class Model:
     def __init__(self, variant="v3", stack="hgb", n_estimators=150, max_depth=3, subsample=0.8, K=6, K_short=6, t_min=100, splits="all", lr=0.03, max_leaf_nodes=15,
-                 min_samples_leaf=1000, l2=1.0, max_iter=400, seeds=3, blend=0.4, sizes="gate", gate=None, size_kw=None, size_pool="train", signal_shift=True, size_feat=True, size_stack=False, size_blend=0.5, tick_seed=0, bags=5, lr_weight=0.5, lr_spec=("d", "chg"), lr_l2=1.0, cshift=0.0, cs_clip=10.0, size_menu=True, menu_k=32,
+                 min_samples_leaf=1000, l2=1.0, max_iter=400, seeds=3, blend=0.4, sizes="gate", gate=None, size_kw=None, size_pool="train", signal_shift=True, size_feat=True, size_stack=False, size_blend=0.5, tick_seed=0, bags=5, lr_weight=0.5, lr_spec=("d", "chg"), lr_l2=1.0, cshift=0.0, cs_clip=10.0, size_menu=True, menu_k=32, menu_check=True,
                  workers=None, cache=True, **v1kw):
         self.variant = variant
         if variant == "v1":
@@ -92,7 +92,7 @@ class Model:
         self.size_feat, self.size_stack, self.size_blend = size_feat, size_stack, size_blend
         self.tick_seed = tick_seed   # which random history ticks become training examples (0 = original sample)
         self.lr_weight, self.lr_spec, self.lr_l2 = lr_weight, tuple(lr_spec), lr_l2
-        self.size_menu, self.menu_k = size_menu, menu_k   # snap sizes onto a learned 2-vector menu per type (size_menu.py)
+        self.size_menu, self.menu_k, self.menu_check = size_menu, menu_k, menu_check   # menu_check: keep a type's snap only if the no-target self-check supports it   # snap sizes onto a learned 2-vector menu per type (size_menu.py)
         self.cshift, self.cs_clip = cshift, cs_clip   # covariate-shift correction strength (0 = off): weights ~ (q(x)/p(x))**cshift
         self.bags = bags             # bagging: stackers trained on `bags` independent tick samples, probabilities averaged
         self.stack = stack
@@ -192,12 +192,16 @@ class Model:
         self.menu = None
         if self.size_menu and "gate" in self.size_models:     # exact two-state size menu, learned from HISTORY ticks only
             path = _cache_path("menu", os.path.abspath(pub), json.dumps(self.gate_kw, sort_keys=True), self.signal_shift,
-                               json.dumps(self.size_kw, sort_keys=True), self.size_pool, tuple(splits), self.menu_k, FEATURE_VERSION)
-            self.menu = _load(path) if self.cache else None
-            if self.menu is None:
-                self.menu = fit_menu(pub, splits, self.size_models["gate"], self.menu_k, self.workers)
+                               json.dumps(self.size_kw, sort_keys=True), self.size_pool, tuple(splits), self.menu_k, self.menu_check, FEATURE_VERSION)
+            hit = _load(path) if self.cache else None
+            if hit is None:
+                rep = {}; menu = fit_menu(pub, splits, self.size_models["gate"], self.menu_k, self.workers, check=self.menu_check, report=rep)
+                hit = (menu, rep)
                 if self.cache:
-                    _save(path, self.menu)
+                    _save(path, hit)
+            self.menu, self.menu_report = hit
+            if self.menu_check:
+                print("method4_ml size-menu self-check:", {t: (round(v["t"], 1), "keep" if v["kept"] else "OFF") for t, v in self.menu_report.items()}, flush=True)
         import numpy as np
         self.clfs = []; base_seed = self.tick_seed; Xall, yall, Wall = [], [], []
         Xq = None

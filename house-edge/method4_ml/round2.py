@@ -58,6 +58,11 @@ def main():
         base = sc["gate only"]; best = max(sc, key=sc.get)
         choice = best if sc[best] - base >= MARGIN else "gate only"
         print(f"\nchosen on TUNING half: {choice}  (best {best} {sc[best]:.3f}, gate only {base:.3f}, margin {MARGIN})")
+        if getattr(m, "menu", None) is not None:     # diagnostic only: the size-menu decision is made by the no-target self-check in fit
+            bb, ww = VARIANTS[choice]; m.blend, m.lr_weight = bb, ww; keep_menu = m.menu; m.menu = None
+            p0 = m.predict(pub, "validation"); m.menu = keep_menu
+            print(f"size menu self-check: {getattr(m, 'menu_report', {})}")
+            print(f"diagnostic, chosen variant WITHOUT size menu: tuning {points(pub, p0, tune)[0]:.3f}  full {points(pub, p0, None)[0]:.3f}")
     b, w = VARIANTS[choice]; m.blend, m.lr_weight = b, w
     write_predictions(os.path.join(a.out, "submission.csv"), m.predict(pub, "test"))
     json.dump({"blend": b, "lr_weight": w, "variant": choice}, open(os.path.join(a.out, "chosen.json"), "w"))
