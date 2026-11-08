@@ -42,13 +42,18 @@ python3 -m method4_ml.round2 --data ../data/main --out ../build/rev_main --no-ca
 
 Run the round-two script on main data first as a rehearsal. Before 9 PM Saturday there is no adaptation data; once it arrives, put it in `../data/adaptation/` and use `--data ../data/adaptation`.
 
-## Round two (adaptation), once the kit is out
+## Round two (adaptation), once the kit is out (90 minutes)
 
-1. Unzip the new kit into its own folder. Check `public/metadata.json` says `"round": "adaptation"`.
-2. Copy its `public/` to `../data/adaptation/`. Do not touch `../data/main/`.
-3. `python3 -m method4_ml.round2 --data ../data/adaptation --out ../build/rev_r2 --no-cache` (reads FLAGS and the variant table).
-4. Package: `python3 -m method4_ml.make_entry --data ../data/adaptation --out ../build/rev_adapt --kwargs "$(cat ../build/rev_r2/chosen.json)"`.
-5. Check that the ZIP's CSV matches `../build/rev_r2/submission.csv`, then upload `submission.csv` and `entry.zip` to the Adaptation Form.
+1. Unzip the new kit into its own folder; copy its `public/` to `../data/adaptation/` (never over `../data/main/`).
+2. **Fallback first** (plain v8, about 17 min): `python3 adapt.py --data ../data/adaptation --out build/r2_base --force base`
+   -> `build/r2_base/submission.csv`, checked. Upload a fallback as soon as it exists (package it with step 5).
+3. **Select** (about 3-4 min): `python3 adapt.py --data ../data/adaptation --out build/r2 --stage select`
+   refits v8's gate, derives lag pairs from the fitted prior, fits the shared-base + size-shift structure, compares on the TUNING half (validation answers),
+   one audit-half guard, writes `build/r2/chosen.json`. Prints derived pairs, gamma per type, convergence and bound hits.
+4. **Final** (only if chosen = sb; about 17 min): `python3 adapt.py --data ../data/adaptation --out build/r2 --stage final`.
+5. **Package** the chosen configuration: `python3 -m method4_ml.make_entry --data ../data/adaptation --out build/r2_entry --kwargs "$(python3 -c "import json;print(json.dumps(json.load(open('build/r2/chosen.json'))['kwargs']))")"`
+   and check its CSV equals the one from step 2 or 4. Upload `submission.csv` + `entry.zip` to the Adaptation Form.
+Tested: synthetic kits with changed lag pairs (adopts the structure) and with the size shift removed (falls back to v8); see FINDINGS Entry 10.
 
 If scikit-learn is not allowed on the runner, the stdlib fallback is Adi's `adi.r2` runner (see `adi/r2/README.md` in the original repo).
 

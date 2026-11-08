@@ -26,7 +26,7 @@ def structures(max_lag=8, xor_order=2, and_pairs=False, and_max_lag=None):
 
 def gate_value(form, lags, w, t):
     """Gate bit at tick t from wins strictly before t, or None if any input tick is missing."""
-    if form in ("xs", "xst"):  # size-split forms: the gate bit is the XOR of the pair (the split only refines cells)
+    if form in ("xs", "xst", "xsg"):  # size-split forms: the gate bit is the XOR of the pair (the split only refines cells)
         form, lags = "xor", lags[:2]
     if form == "xor":
         x = 0
@@ -144,6 +144,77 @@ def _group_mixture(nz, kz, zc, cp, a=.5, b=.5):
         pA = rate(zc, zc < h); pB = rate(zc, zc >= h)
     return ll, (wA * pA + wB * pB) / s
 
+_SH = {}
+
+
+def _shared_grid():
+    import numpy as np
+    if "g" not in _SH:
+        _SH["g"] = np.arange(-9.0, 7.0001, 0.2)
+        _SH["sd"] = np.array([[-1.0, -1.0, 1.0], [1.0, 1.0, -1.0]])
+    return _SH["g"], _SH["sd"]
+
+
+def _shared_consts(cp5):
+    """Per-prior constants (memoized): log prior weights of the two base rates, log sigmoid tables per direction, rate tables."""
+    import numpy as np
+    key = tuple(cp5)
+    if key in _SH:
+        return _SH[key]
+    mu_on, mu_off, s_on, s_off, gam = key
+    g, sd = _shared_grid()
+    def lw(mu, s):
+        x = -0.5 * ((g - mu) / s) ** 2; m = x.max(); return x - (m + np.log(np.exp(x - m).sum()))
+    lp, lq, R = [], [], []
+    for d in (0, 1):
+        th = g[None, :] + gam * sd[d][:, None]                      # (3 categories, G)
+        lp.append(-np.logaddexp(0, -th)); lq.append(-np.logaddexp(0, th)); R.append(1 / (1 + np.exp(-th)))
+    _SH[key] = (lw(mu_on, s_on), lw(mu_off, s_off), lp, lq, R)
+    return _SH[key]
+
+
+def _lse(a, axis):
+    import numpy as np
+    m = a.max(axis=axis, keepdims=True); return (m + np.log(np.exp(a - m).sum(axis=axis, keepdims=True))).squeeze(axis)
+
+
+def _shared_tables(rows, cp, a=.5, b=.5):
+    """Structure "xsg": six cells = XOR side (0/1) x payout category at the size lag (loss/1x/big), exactly the cells of "xs", but the machine has
+    ONE base win rate per gate side (independent logit-normal priors for the 'on' and 'off' side, roles unknown 50/50) and the hidden size state
+    moves every cell's logit by +-gamma (direction d in {0,1} unknown, averaged 50/50, big category vs the other two). Flip times only remap the
+    six cell counts upstream (_split_counts), so change-point inference is untouched. cp[5:10] = (mu_on, mu_off, sigma_on, sigma_off, gamma), already
+    shifted by the signal slopes for this machine. Without those fields the structure falls back to the exchangeable "xs" likelihood."""
+    if cp is None or len(cp) < 10:
+        return [_split_mixture(nz, kz, zc, cp, a, b) for nz, kz, zc in rows]
+    import numpy as np
+    lw_on, lw_off, LP, LQ, R = _shared_consts(cp[5:10])
+    n = np.array([r[0] for r in rows], float); k = np.array([r[1] for r in rows], float); T = len(rows)
+    comps_ll, comps_rate = [], []
+    for d in (0, 1):
+        L = []
+        for side in (0, 1):
+            ks, ns = k[:, 3 * side:3 * side + 3], n[:, 3 * side:3 * side + 3]
+            L.append(ks @ LP[d] + (ns - ks) @ LQ[d])                  # (T, G): binomial log-likelihood of the side's three cells at each base logit
+        for assign in (0, 1):                                          # assign 0: side 0 is the 'on' side
+            w0, w1 = (lw_on, lw_off) if assign == 0 else (lw_off, lw_on)
+            comps_ll.append(_lse(L[0] + w0, 1) + _lse(L[1] + w1, 1))
+            rate = np.empty((T, 6))
+            for side, w in ((0, w0), (1, w1)):
+                z = L[side] + w; z = np.exp(z - z.max(axis=1, keepdims=True)); z /= z.sum(axis=1, keepdims=True)
+                rate[:, 3 * side:3 * side + 3] = z @ R[d].T            # posterior-mean rate of each category cell on this side
+            comps_rate.append(rate)
+    ll_c = np.stack(comps_ll, axis=1)                                   # (T, 4)
+    m = ll_c.max(axis=1, keepdims=True); wgt = np.exp(ll_c - m); sw = wgt.sum(axis=1, keepdims=True)
+    ll = (m + np.log(sw / 4)).squeeze(1); wgt = wgt / sw
+    rates = np.stack(comps_rate, axis=1)                                # (T, 4, 6)
+    cell_rate = (wgt[:, :, None] * rates).sum(axis=1)                   # (T, 6) posterior-mean rate per cell, mixed over (direction, assignment)
+    f = (n + 1.0 / 6) / (n.sum(axis=1, keepdims=True) + 1)              # same mixing weights as _split_mixture when the cutoff cell is unknown
+    out = []
+    for t, (nz, kz, zc) in enumerate(rows):
+        p = float((f[t] * cell_rate[t]).sum()) if zc is None else float(cell_rate[t, zc])
+        out.append((float(ll[t]), p))
+    return out
+
 
 def _tie_rows(rows6, single):
     """Merge 6 split cells (side x category) into 4 (side x state): state 1 = category `single`, 0 = the others."""
@@ -194,6 +265,8 @@ def machine_counts(seq_m, cut, taus, ST, half_life=None):
     for form, st in ST:
         if form == "xs":
             out.append(_split_counts(seq_m, w, cut, taus, st, wt)); continue
+        if form == "xsg":  # shared-base-rate + size-state-shift structure: same six cells as "xs", different likelihood (_shared_tables)
+            out.append(("xsg", _split_counts(seq_m, w, cut, taus, st, wt))); continue
         if form == "xst":  # tied size split: lags (i, j, k, single category that forms its own state)
             out.append(_tie_rows(_split_counts(seq_m, w, cut, taus, st[:3], wt), st[3])); continue
         ts, xs, ys = [], [], []
@@ -230,6 +303,8 @@ def tables_from_counts(C, ntau, a, b, cellprior=None):
     """(log marginal lik, P(win at cut)) per structure and tau, from machine_counts output."""
     out = []; base = 2 * betaln(a, b)
     for rows in C[:-1]:
+        if isinstance(rows, tuple) and rows and rows[0] == "xsg":
+            out.append(_shared_tables(rows[1], cellprior, a, b)); continue
         res = []
         for nz, kz, zc in rows:
             if len(nz) == 6:

@@ -19,6 +19,7 @@ from method2_sizes.sizes import GateSizes
 from method4_ml.pooled import pooled_split
 from method4_ml.signal_shift import attach_signal_shift
 from method4_ml.state_shift import attach_state_shift
+from method4_ml.shared_base import attach_shared_base
 from method4_ml.features3 import episode_examples
 from method4_ml.size_hmm import SizeHMM
 from method4_ml.size_menu import fit_menu, snap
@@ -79,11 +80,12 @@ class GateInit:
 
 class Model:
     def __init__(self, variant="v3", stack="hgb", n_estimators=150, max_depth=3, subsample=0.8, K=6, K_short=6, t_min=100, splits="all", lr=0.03, max_leaf_nodes=15,
-                 min_samples_leaf=1000, l2=1.0, max_iter=400, seeds=3, blend=0.4, sizes="gate", gate=None, size_kw=None, size_pool="train", signal_shift=True, size_feat=True, size_stack=False, size_blend=0.5, tick_seed=0, bags=5, lr_weight=0.5, lr_spec=("d", "chg"), lr_l2=1.0, cshift=0.0, cs_clip=10.0, size_menu=True, menu_k=32, state_shift=False,
+                 min_samples_leaf=1000, l2=1.0, max_iter=400, seeds=3, blend=0.4, sizes="gate", gate=None, size_kw=None, size_pool="train", signal_shift=True, size_feat=True, size_stack=False, size_blend=0.5, tick_seed=0, bags=5, lr_weight=0.5, lr_spec=("d", "chg"), lr_l2=1.0, cshift=0.0, cs_clip=10.0, size_menu=True, menu_k=32, state_shift=False, shared_base=False,
                  workers=None, cache=True, **v1kw):
         self.variant = variant
         self.state_shift = state_shift   # mominsreverseengineering: shared size-state shift on the size-split cells (state_shift.py)
-        self.fver = FEATURE_VERSION + ("+ss" if state_shift else "")
+        self.shared_base = shared_base   # mominsreverseengineering: shared-base-rate + size-state-shift structure ('xsg'), shared_base.py
+        self.fver = FEATURE_VERSION + ("+ss" if state_shift else "") + ("+sb" if shared_base else "")
         if variant == "v1":
             from method4_ml.baseline import Model as V1
             self.v1 = V1(**v1kw); return
@@ -115,6 +117,8 @@ class Model:
                 attach_signal_shift(gm, *pooled_split(pub, ("train",)))
             if self.state_shift:       # shared size-state shift, learned per type on train histories (no labels)
                 attach_state_shift(gm, *pooled_split(pub, ("train",)))
+            if self.shared_base:       # xsg: derive pairs from the fitted prior, fit population, relearn structure prior (flips marginalized)
+                attach_shared_base(gm, *pooled_split(pub, ("train",)))
             if self.cache:
                 _save(path, gm)
         return gm

@@ -41,6 +41,20 @@ def cmd_score(a):
     tune, audit = folds(pub)
     with open(os.path.join(pub, "metadata.json")) as fh:   # point scale comes from THIS kit's metadata (60/40 or 80/20); ratios are scale-free
         maxp = float(json.load(fh).get("max_points", 60))
+    if a.save_pred:
+        import pickle; pickle.dump(pred, open(a.save_pred, "wb"))
+    if a.tuning_only:    # development mode: the audit half (and therefore full validation) is never computed
+        tp, tr = points(pub, pred, tune, maxp)
+        row = dict(time=datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), name=a.name, method=a.method, kwargs=a.kwargs,
+                   tuning=round(tp, 4), audit="", full="",
+                   stable=round(tr["stable"], 5), short=round(tr["short_history"], 5), drift=round(tr["drift"], 5),
+                   shared=round(tr["shared_change"], 5), seconds=round(secs, 1))
+        _append(row)
+        print(f"{a.name}: TUNING-ONLY tuning {tp:.4f}  tuning-half ratios " + " ".join(f"{c} {tr[c]:.5f}" for c in ("stable", "short_history", "drift", "shared_change"))
+              + f"  ({secs:.0f}s)")
+        if a.test_out:
+            write_predictions(a.test_out, m.predict(pub, "test")); print(f"test predictions -> {a.test_out}")
+        return
     tp = points(pub, pred, tune, maxp)[0]; ap = points(pub, pred, audit, maxp)[0]; fp, fr = points(pub, pred, None, maxp)
     row = dict(time=datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), name=a.name, method=a.method, kwargs=a.kwargs,
                tuning=round(tp, 4), audit=round(ap, 4), full=round(fp, 4),
@@ -93,6 +107,7 @@ def main():
     ap = argparse.ArgumentParser(); sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("score"); s.add_argument("--name", required=True); s.add_argument("--method", default="method4_ml")
     s.add_argument("--kwargs", default="{}"); s.add_argument("--data", default="../data/main"); s.add_argument("--test-out")
+    s.add_argument("--tuning-only", action="store_true"); s.add_argument("--save-pred")
     s.set_defaults(fn=cmd_score)
     k = sub.add_parser("keep"); k.add_argument("--b", required=True); k.add_argument("--data", default="../data/main")
     k.set_defaults(fn=cmd_keep)

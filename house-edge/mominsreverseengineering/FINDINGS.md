@@ -3,6 +3,39 @@
 Ledger of hypotheses, tests and verdicts. Newest at the top. Each entry: hypothesis, test, numbers, verdict, why.
 Reverts stay here as negative results. See CONTROL.md for the keep rule.
 
+## Entry 10: integrated prototype (`xsg` structure in the v8 gate) through a real tuning evaluation: +0.027, NOT distinguishable from noise
+
+**Build.** `adi/gate.py` (our copy): new structure form `xsg` = the six cells of `xs` with ONE base rate per gate side (independent logit-normal priors,
+on/off roles averaged) and a +-gamma size-state shift (direction averaged); vectorised over flip times; flip times only remap cell counts upstream, so
+change-point inference is untouched. Checked against an independent brute-force implementation (max difference 3e-14) and falls back exactly to `xs`
+when its parameters are absent. `method4_ml/shared_base.py`: derives candidate pairs and size lags from the gate's FITTED structure prior, fits the
+population per type by marginal likelihood (two starts, L-BFGS-B restarts), records convergence and bound hits, adds one `xsg` per pair and relearns the
+structure prior with flips marginalized. Off by default (`shared_base=False`).
+**Disabled == v8:** gate P(win) vs the original gate code on 2,304 validation+test queries: max difference 7e-15; full pipeline tuning 58.3107 (= baseline).
+**Fit on main train (18 s):** pairs derived (1,3)/1, (2,5)/2, (4,7)/4; all three types converged; gamma .46 / .53 / .30, slopes .32-.40, on-side sigma .26-.34;
+bound hits: jackpot off-side sigma at its .2 floor, and nuisance terms (structure-weight logits, the 'no gate' component). New structure takes 42% of the prior.
+**Flips-enabled screening** (`screen_shared.py`, in-sample priors for both): V1 - V0 = -5.5 to -6.7 x1e-4 pre-flip, -7.0 to -9.0 post-flip (CIs exclude 0);
+stable, drift and shared all negative; jackpot -14 to -19, balanced -4 to -12, steady about 0 (+1.8 to +2.5 post-flip).
+
+**Frozen tuning evaluation** (official metric, tuning half only; the audit half was never computed):
+
+| model | tuning /60 | stable | short | drift | shared |
+| --- | --- | --- | --- | --- | --- |
+| v8 (current code, structure off) | 58.3107 | .02035 | .05276 | .02723 | .01555 |
+| v8 + xsg | 58.3376 | .01854 | .05198 | .02827 | .01519 |
+| change | +0.027 | -8.9% | -1.5% | +3.8% (worse) | -2.3% |
+
+Paired episode bootstrap on the tuning half (48 episodes): +0.027 points, 95% CI [-0.066, +0.117], P(better) = .735; episodes better: stable 7/12, short 8/12,
+drift 6/12, shared 7/12. Runtime: fresh fit + validation 1012 s (v8 fresh runs took 966-1197 s; the new step itself is 18 s).
+**Verdict: NO-GO for adoption as the Round 1 model.** The gain is well below the noise between halves and drift gets worse, so it does not earn the single
+audit look. Kept as an OPTIONAL, data-selected candidate for Round 2 (adapt.py adopts it only when the new kit's tuning half shows a clear gain).
+
+**Round 2 adaptation procedure (`adapt.py`), tested:**
+- synthetic kit with CHANGED lag pairs (2,4)/(3,6)/(1,5) and gamma .5: derived the new pairs, recovered gamma .54 / .50 / .47 and slopes, chose the new
+  structure (win-side mean ratio -26%), passed the audit guard; 159 s.
+- synthetic kit with the size shift REMOVED: learned gamma .16 / .02 / .00, chose plain v8 (one condition +11% worse); 203 s.
+These test the mechanics only; the synthetic generator is mine, not the organizers'.
+
 ## Entry 9: size-shift ablation (`prefixdiag_ablation.py`): the size-state shift is ESSENTIAL; pooling alone is worse than flip-fair v8
 
 Same folds, pseudo-queries, targets and flip-fair v8 as Entry 8 (HD - V0ff reproduced exactly). HDg0 = HD with gamma fixed to 0 (verified 0 in every fit), all else identical.
