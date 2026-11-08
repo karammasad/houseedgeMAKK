@@ -3,6 +3,32 @@
 Ledger of hypotheses, tests and verdicts. Newest at the top. Each entry: hypothesis, test, numbers, verdict, why.
 Reverts stay here as negative results. See CONTROL.md for the keep rule.
 
+## Entry 9: size-shift ablation (`prefixdiag_ablation.py`): the size-state shift is ESSENTIAL; pooling alone is worse than flip-fair v8
+
+Same folds, pseudo-queries, targets and flip-fair v8 as Entry 8 (HD - V0ff reproduced exactly). HDg0 = HD with gamma fixed to 0 (verified 0 in every fit), all else identical.
+Paired difference (x1e-4, negative = first model better, 95% CI clustered by episode, 72 episodes):
+
+| information | HD - V0ff | HDg0 - V0ff | HDg0 - HD |
+| --- | --- | --- | --- |
+| 10 ticks | -8.07 [-13.89, -2.09] | -5.98 [-11.50, +0.17] | +2.09 [-0.80, +5.18] |
+| 20 ticks | -4.44 [-10.68, +1.45] | -0.02 [-3.32, +3.30] | +4.42 [-0.67, +10.16] |
+| 40 ticks | -6.96 [-12.77, -1.31] | +3.34 [-0.52, +7.34] | +10.30 [+3.90, +17.22] |
+| real short layout | -8.03 [-13.73, -2.43] | +3.78 [-0.06, +7.81] | +11.81 [+5.15, +18.69] |
+| 80 ticks | -8.26 [-13.78, -3.07] | +7.11 [+3.04, +11.75] | +15.37 [+8.42, +22.94] |
+| full history | -8.62 [-13.84, -3.37] | +8.86 [+4.87, +13.04] | +17.48 [+10.01, +24.71] |
+
+Jackpot machines, HDg0 - HD: n20 +16.5 [+0.1, +33.7], n40 +30.6 [+10.0, +52.2], short layout +33.2 [+12.0, +55.2], full +40.1 [+16.2, +64.4]; jackpot HDg0 - V0ff is POSITIVE
+(worse than flip-fair v8): n40 +9.7 [+1.1, +19.7], full +19.7 [+9.5, +31.0]. Balanced: the shift matters from 40 ticks up (HDg0 - HD +6.1 at n40, +7.4 short layout, +14.7 full).
+Steady: nothing at 20+ ticks (CIs include 0), but at 10 ticks the steady gain (-21.0) is kept almost entirely without the shift (-19.4): a pure prior effect.
+Optimizer status (L-BFGS-B, 120-iteration cap): HD converged in folds 0, 1, 3 and NOT in fold 2 or the full-data fit; HDg0 converged in folds 0, 2, 3 and the full fit and NOT in fold 1.
+Fixing gamma gave fewer iterations (47-80 vs 72-120) but one non-converged fit in each model family's folds (HD 1 of 4 folds, HDg0 1 of 4): no reliable convergence benefit.
+In-sample (full data): gamma adds +159.9 log-likelihood for 3 parameters (the gate-level state-shift evidence earlier summed to about +156).
+Interpretation by the pre-stated rules: the gain DISAPPEARS without the shift from 40 ticks upward, so the size-state effect is essential there; at 10 ticks about three quarters of the
+gain survives without it (prior effect, CI includes 0). The ablation never outperforms HD. Pooling the six sub-cells under one shared base rate is NOT sufficient: with gamma = 0 it is worse
+than flip-fair v8, whose mixture of plain and split structures captures part of the state effect. The two production-relevant facts together: (a) the earlier production state_shift run
+(independent sub-cells, loose strengths, shift added) LOWERED the score; (b) shared base + shift + tight priors WINS in the flip-free window. Untested: whether pooling or tightness matters
+once the shift is present (would need independent sub-cells with the same shift and strengths).
+
 ## Entry 8: flip-fair control (`prefixdiag_flipfair.py`): a real but smaller gain SURVIVES; conditional GO to ONE ablation, not to a tuning evaluation
 
 Same pseudo-queries, prefixes, targets, folds and scoring code as Entry 7 (reproduced exactly: V0 Brier and HD - V0 identical in all six settings).

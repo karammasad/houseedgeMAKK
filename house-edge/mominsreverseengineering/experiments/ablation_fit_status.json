@@ -1,0 +1,82 @@
+[
+ {
+  "fold": 0,
+  "model": "HD",
+  "converged": true,
+  "iterations": 77,
+  "loglik": -14300.3,
+  "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH"
+ },
+ {
+  "fold": 0,
+  "model": "HDg0",
+  "converged": true,
+  "iterations": 80,
+  "loglik": -14412.5,
+  "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH"
+ },
+ {
+  "fold": 1,
+  "model": "HD",
+  "converged": true,
+  "iterations": 73,
+  "loglik": -14431.5,
+  "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH"
+ },
+ {
+  "fold": 1,
+  "model": "HDg0",
+  "converged": false,
+  "iterations": 120,
+  "loglik": -14556.2,
+  "message": "STOP: TOTAL NO. OF ITERATIONS REACHED LIMIT"
+ },
+ {
+  "fold": 2,
+  "model": "HD",
+  "converged": false,
+  "iterations": 120,
+  "loglik": -14655.6,
+  "message": "STOP: TOTAL NO. OF ITERATIONS REACHED LIMIT"
+ },
+ {
+  "fold": 2,
+  "model": "HDg0",
+  "converged": true,
+  "iterations": 47,
+  "loglik": -14783.6,
+  "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH"
+ },
+ {
+  "fold": 3,
+  "model": "HD",
+  "converged": true,
+  "iterations": 72,
+  "loglik": -14339.7,
+  "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH"
+ },
+ {
+  "fold": 3,
+  "model": "HDg0",
+  "converged": true,
+  "iterations": 56,
+  "loglik": -14456.2,
+  "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH"
+ },
+ {
+  "fold": "all",
+  "model": "HD",
+  "converged": false,
+  "iterations": 120,
+  "loglik": -19245.2,
+  "message": "STOP: TOTAL NO. OF ITERATIONS REACHED LIMIT"
+ },
+ {
+  "fold": "all",
+  "model": "HDg0",
+  "converged": true,
+  "iterations": 68,
+  "loglik": -19405.1,
+  "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH"
+ }
+]
