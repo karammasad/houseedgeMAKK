@@ -15,10 +15,19 @@
 import argparse, json, os, time
 from common.data import public_dir, write_predictions
 from common.evaluate import folds, points
-from method4_ml.model import Model
+from method4_ml.model import Model, GATE
 
-MARGIN = 0.05   # tuning points a variant must gain over 'gate only' to be chosen (selection noise is ~0.03-0.05 on 48 episodes)
+MARGIN = 0.05   # tuning points a variant must gain over the default to be chosen (selection noise is ~0.03-0.05 on 48 episodes)
 VARIANTS = {"gate only": (0.0, 0.0), "trees": (0.4, 0.0), "logistic": (0.0, 1.0), "v7 (trees + logistic)": (0.4, 0.5)}
+# v9: several FITS (each with the four blend variants). The polarity bank adds cross-machine / size-category evidence the gate
+# family cannot express; "wide" also widens the gate (XOR triples, size split at both lags; slower: check runtime before shipping).
+FITS = {"v8": {}, "v9": {"polarity": True}, "v9+pol-lr": {"polarity": True, "lr_spec": ["d", "chg", "pol"]}}
+WIDE = {"v9 wide gate": {"polarity": True, "gate": {**GATE, "xor_order": 3, "size_split": "both"}}}
+# Round-one reuse (needs round-one data: --main, or auto = /main_data or a sibling data/main): frozen round-one model, combined
+# round-one + round-two training, and a conservative fixed-weight blend (weight .25 on round one, set in advance, not tuned).
+R1_FITS = {"R1 frozen": {"polarity": True, "r1": "frozen"}, "R1+R2 combined": {"polarity": True, "r1": "combined"},
+           "R2 + .25 R1 blend": {"polarity": True, "r1": "blend", "r1_weight": 0.25}}
+DEFAULT = ("v9", "v7 (trees + logistic)")   # used when there are no targets, and the bar every other candidate must clear
 
 
 def report(m):
@@ -42,27 +51,71 @@ def report(m):
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--data", required=True); ap.add_argument("--out", required=True)
     ap.add_argument("--no-cache", action="store_true", help="recompute everything (use for the real run)")
+    ap.add_argument("--wide", action="store_true", help="also try the widened gate (slower fit; check 2-core runtime before shipping)")
+    ap.add_argument("--only", default=None, help="comma-separated fit names to run (default: all)")
+    ap.add_argument("--workers", type=int, default=None)
+    ap.add_argument("--main", default="auto", help="round-one public folder for the R1 candidates ('none' to skip them)")
+    ap.add_argument("--set", default="{}", help="JSON settings applied to every fit (e.g. '{\"bags\": 2}' for quick stress runs)")
     a = ap.parse_args(); pub = public_dir(a.data); os.makedirs(a.out, exist_ok=False)
-    t0 = time.time(); m = Model(cache=not a.no_cache).fit(pub); print(f"fit {time.time() - t0:.0f}s", flush=True)
-    rep, flags = report(m); print(json.dumps(rep, indent=1)); print("FLAGS:", *flags, sep="\n  ")
+    fits = dict(FITS, **(WIDE if a.wide else {}))
+    if a.main != "none":
+        try:
+            Model(r1="frozen", r1_data=a.main)._r1_pub(pub); fits.update({k: dict(v, r1_data=a.main) for k, v in R1_FITS.items()})
+        except FileNotFoundError as e:
+            print(f"R1 candidates skipped: {e}", flush=True)
+    fits = {k: {**json.loads(a.set), **v} for k, v in fits.items()}
+    if a.only:
+        fits = {k: v for k, v in fits.items() if k in a.only.split(",")}
+    t0 = time.time(); models, preds, secs = {}, {}, {}
+    for fname, kw in fits.items():
+        t1 = time.time()
+        try:
+            m = Model(cache=not a.no_cache, workers=a.workers, **kw).fit(pub)
+        except Exception as e:      # a candidate that cannot run on this round is reported and skipped, never fatal
+            print(f"fit {fname} FAILED ({type(e).__name__}: {e}); skipped", flush=True); continue
+        try:
+            for vname, (b, w) in VARIANTS.items():
+                m.blend, m.lr_weight = b, w; preds[(fname, vname)] = m.predict(pub, "validation")
+        except Exception as e:      # e.g. a frozen round-one model meeting a machine type it never saw
+            print(f"predict {fname} FAILED ({type(e).__name__}: {e}); skipped", flush=True)
+            preds = {k: v for k, v in preds.items() if k[0] != fname}; continue
+        models[fname] = m
+        secs[fname] = time.time() - t1; print(f"fit {fname}: {secs[fname]:.0f}s", flush=True)
+    preds = {k: v for k, v in preds.items() if k[0] in models}
+    first = models[next(iter(models))]
+    rep, flags = report(first); print(json.dumps(rep, indent=1)); print("FLAGS:", *flags, sep="\n  ")
     have = os.path.exists(os.path.join(pub, "validation", "targets.csv"))
-    preds = {}
-    for name, (b, w) in VARIANTS.items():
-        m.blend, m.lr_weight = b, w; preds[name] = m.predict(pub, "validation")
-    choice = "v7 (trees + logistic)"
+    default = DEFAULT if DEFAULT in preds else next(iter(preds)); choice = default
     if have:
-        tune, audit = folds(pub); sc = {n: points(pub, p, tune)[0] for n, p in preds.items()}
-        print(f"\n{'variant':24s} tuning    audit     full")
-        for n, p in preds.items():
-            print(f"{n:24s} {sc[n]:.3f}  {points(pub, p, audit)[0]:.3f}  {points(pub, p, None)[0]:.3f}")
-        base = sc["gate only"]; best = max(sc, key=sc.get)
-        choice = best if sc[best] - base >= MARGIN else "gate only"
-        print(f"\nchosen on TUNING half: {choice}  (best {best} {sc[best]:.3f}, gate only {base:.3f}, margin {MARGIN})")
-    b, w = VARIANTS[choice]; m.blend, m.lr_weight = b, w
+        tune, audit = folds(pub)
+        sc = {k: points(pub, p, tune)[0] for k, p in preds.items()}; au = {k: points(pub, p, audit)[0] for k, p in preds.items()}
+        print(f"\n{'fit':14s} {'variant':24s} tuning    audit     full")
+        for k, p in preds.items():
+            print(f"{k[0]:14s} {k[1]:24s} {sc[k]:.3f}  {au[k]:.3f}  {points(pub, p, None)[0]:.3f}")
+        best = max(sc, key=sc.get); floor = min((k for k in sc if k[1] == "gate only"), key=lambda k: -sc[k])
+        if best != default and sc[best] - sc[default] >= MARGIN and au[best] >= au[default]:
+            choice = best      # clearly better on tuning, and the audit half moves the same way (guard only, never a selector)
+        elif sc[floor] - sc[default] >= MARGIN and au[floor] >= au[default]:
+            choice = floor     # the stackers stopped generalizing: fall back to the plain gate + sizes
+        print(f"\nchosen: {choice}  (default {default} tuning {sc[default]:.3f}; best on tuning {best} {sc[best]:.3f}; margin {MARGIN})")
+        m = models[choice[0]]
+        if getattr(m, "menu", None) is not None:     # diagnostic only: the size-menu decision is made by the no-target self-check in fit
+            bb, ww = VARIANTS[choice[1]]; m.blend, m.lr_weight = bb, ww; keep_menu = m.menu; m.menu = None
+            p0 = m.predict(pub, "validation"); m.menu = keep_menu
+            print(f"size menu self-check: {getattr(m, 'menu_report', {})}")
+            print(f"diagnostic, chosen variant WITHOUT size menu: tuning {points(pub, p0, tune)[0]:.3f}  full {points(pub, p0, None)[0]:.3f}")
+    m = models[choice[0]]; b, w = VARIANTS[choice[1]]; m.blend, m.lr_weight = b, w
     write_predictions(os.path.join(a.out, "submission.csv"), m.predict(pub, "test"))
-    json.dump({"blend": b, "lr_weight": w, "variant": choice}, open(os.path.join(a.out, "chosen.json"), "w"))
-    json.dump({"report": rep, "flags": flags}, open(os.path.join(a.out, "learned.json"), "w"), indent=1)
-    print(f"wrote {a.out}/submission.csv  chosen={choice}  total {time.time() - t0:.0f}s")
+    kw = {**fits[choice[0]], "blend": b, "lr_weight": w}
+    if "r1_data" in kw:
+        kw["r1_data"] = "auto"   # the organizer runner mounts round one at /main_data; locally auto finds data/main next to --data
+    if kw.get("r1") in ("blend", "combined"):
+        print(f"NOTE: {kw['r1']} fits more data than v9 (fit {secs.get(choice[0], 0):.0f}s here); measure the cold 2-core runtime before shipping")
+    json.dump(kw, open(os.path.join(a.out, "chosen.json"), "w"))
+    json.dump({"choice": list(choice), "report": rep, "flags": flags, "fit_seconds": secs}, open(os.path.join(a.out, "learned.json"), "w"), indent=1)
+    print(f"wrote {a.out}/submission.csv  chosen={choice}  kwargs={json.dumps(kw)}  total {time.time() - t0:.0f}s")
+    if choice[0] != "v8" and "gate" in fits[choice[0]]:
+        print("WARNING: widened gate chosen; measure the cold 2-core runtime (organizer limit 30 min) before shipping")
 
 
 if __name__ == "__main__":

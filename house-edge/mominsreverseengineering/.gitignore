@@ -7,3 +7,10 @@ data/
 experiments/synth_*/
 experiments/gm_sb.pkl
 build/
+experiments/wd_rows.pkl
+experiments/pred_cook_valid.pkl
+experiments/test_cook.csv
+experiments/validation_sbcook.csv
+experiments/cook_model.pkl
+experiments/test_cook_noans.csv
+experiments/leak_cook_opens.log

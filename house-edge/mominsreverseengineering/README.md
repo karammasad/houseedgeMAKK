@@ -26,6 +26,7 @@ git fetch origin && git checkout mominsreverseengineering && cd house-edge/momin
 python3 -m pip install -r requirements.txt            # needs house-edge/data/main/ (the kit's public/ folder, gitignored)
 python3 run.py score --name "try" --kwargs '{"shared_base": true}' --tuning-only   # candidate; omit --kwargs for plain v8; ~17 min fresh, 30 s with caches
 ```
+Package for upload (fits once, ships the fitted model so the organizers' rerun takes about a minute): `python3 -m method4_ml.make_entry --data ../data/main --out build/entry --kwargs '{"shared_base": true}'` (or `--model-pkl <fitted model.pkl>` to skip the fit; omit --kwargs for plain v8).
 Status: INCONCLUSIVE as a Round 1 upgrade (+0.057 full validation, see FINDINGS Entry 12); plain v8 stays primary. The audit half is consumed: do not tune on it.
 
 ## Setup

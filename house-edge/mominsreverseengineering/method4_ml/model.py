@@ -18,14 +18,52 @@ from adi.model import Model as AdiModel
 from method2_sizes.sizes import GateSizes
 from method4_ml.pooled import pooled_split
 from method4_ml.signal_shift import attach_signal_shift
-from method4_ml.state_shift import attach_state_shift
 from method4_ml.shared_base import attach_shared_base
-from method4_ml.features3 import episode_examples
+from method4_ml.features3 import episode_examples, type_order
 from method4_ml.size_hmm import SizeHMM
 from method4_ml.size_menu import fit_menu, snap
 from method4_ml.logit_stack import design, fit_offset_logistic, predict as lr_predict, check_layout
 
 FEATURE_VERSION = "f3.5"   # (menu cache key also includes it)
+
+
+def learn_short_shape(pub, splits=("train", "validation", "test")):
+    """Shape of a short log, learned from the round's HISTORIES (no labels): which ticks a short log keeps, relative to its
+    cutoff. Short = more than half the ticks missing. If (nearly) every short log is 'the last R ticks + O older ticks'
+    (main round: 40 + 24) -> ("classic", R, O), which reproduces v8's masking exactly. Otherwise -> ("harvest", masks, R): the
+    augmentation copies a real short log's mask (recent run kept exactly, older observed positions rescaled to the tick)."""
+    masks = []
+    for sp in splits:
+        if not os.path.exists(os.path.join(pub, sp, "history.csv")):
+            continue
+        q, seq = load_split(pub, sp)
+        for r in q:
+            s = seq[r["machine_id"]]
+            if sum(x < 0 for x in s) > len(s) / 2:
+                masks.append((len(s), tuple(i for i, x in enumerate(s) if x >= 0)))
+    if not masks:
+        return ("classic", 40, 24)
+    def run(cut, obs):
+        k, o = 0, set(obs)
+        while cut - 1 - k in o: k += 1
+        return k
+    runs = sorted(run(c, o) for c, o in masks); counts = [len(o) for _, o in masks]
+    n_mode = max(set(counts), key=lambda c: (counts.count(c), -c)); R = runs[0]
+    if R >= 8 and counts.count(n_mode) >= .9 * len(counts):
+        return ("classic", R, n_mode - R)
+    return ("harvest", masks, runs[len(runs) // 2])
+
+
+def short_mask(t, rng, shape):
+    """Ticks kept (as a set, including the label tick t) when masking a long log like a short one at prediction tick t."""
+    if shape[0] == "classic":
+        R, O = shape[1], shape[2]
+        return set(range(t - R, t + 1)) | set(rng.sample(range(max(t - R, 0)), min(O, max(t - R, 0))))
+    masks, R = shape[1], shape[2]; cut, obs = masks[rng.randrange(len(masks))]; keep = {t}
+    for i in obs:
+        d = cut - i
+        keep.add(t - d if d <= R else int(i * max(t - R, 0) / max(cut - R, 1)))
+    return {k for k in keep if 0 <= k <= t}
 HERE = os.path.dirname(os.path.abspath(__file__))
 # adi's win-gate configuration (adi/FINDINGS.md): wide pruned family, learned cell priors. Its built-in sizes are only a
 # cheap placeholder here: the real size model is SIZES below, fit separately (optionally on every split's histories).
@@ -78,14 +116,32 @@ class GateInit:
         p = np.clip(np.asarray(X)[:, 0], 1e-4, 1 - 1e-4); return np.column_stack([1 - p, p])
 
 
+class _BrierTrees:
+    """Squared-error (binary Brier) boosting on the 0/1 win outcome, exposed like a classifier (clipped to [1e-4, 1 - 1e-4])."""
+    def __init__(self, **kw):
+        from sklearn.ensemble import HistGradientBoostingRegressor
+        self.m = HistGradientBoostingRegressor(loss="squared_error", **kw)
+
+    def fit(self, X, y, sample_weight=None):
+        self.m.fit(X, y, sample_weight=sample_weight); return self
+
+    def predict_proba(self, X):
+        p = np.clip(self.m.predict(X), 1e-4, 1 - 1e-4); return np.column_stack([1 - p, p])
+
+
 class Model:
     def __init__(self, variant="v3", stack="hgb", n_estimators=150, max_depth=3, subsample=0.8, K=6, K_short=6, t_min=100, splits="all", lr=0.03, max_leaf_nodes=15,
-                 min_samples_leaf=1000, l2=1.0, max_iter=400, seeds=3, blend=0.4, sizes="gate", gate=None, size_kw=None, size_pool="train", signal_shift=True, size_feat=True, size_stack=False, size_blend=0.5, tick_seed=0, bags=5, lr_weight=0.5, lr_spec=("d", "chg"), lr_l2=1.0, cshift=0.0, cs_clip=10.0, size_menu=True, menu_k=32, state_shift=False, shared_base=False,
-                 workers=None, cache=True, **v1kw):
+                 min_samples_leaf=1000, l2=1.0, max_iter=400, seeds=3, blend=0.4, sizes="gate", gate=None, size_kw=None, size_pool="train", signal_shift=True, size_feat=True, size_stack=False, size_blend=0.5, tick_seed=0, bags=5, lr_weight=0.5, lr_spec=("d", "chg"), lr_l2=1.0, cshift=0.0, cs_clip=10.0, size_menu=True, menu_k=32, menu_check=True,
+                 polarity=False, shared_base=False, stack_loss="log", r1="off", r1_weight=0.25, r1_data="auto", workers=None, cache=True, **v1kw):
+        self._kw = {k: v for k, v in locals().items() if k not in ("self", "v1kw", "__class__")}; self._kw.update(v1kw)
+        # Round-one reuse (adaptation): "off" (refit on this round only, default), "frozen" (the model fit on round-one data,
+        # applied as is), "combined" (fit on round-one + this round's TRAIN), "blend" (this round's fit pooled with the frozen
+        # round-one model, weight r1_weight on round one). r1_data: round-one public folder, or "auto" = /main_data (organizer
+        # mount), else a sibling "main" folder of --data (local layout data/main next to data/adaptation).
+        self.r1, self.r1_weight, self.r1_data = r1, r1_weight, r1_data
         self.variant = variant
-        self.state_shift = state_shift   # mominsreverseengineering: shared size-state shift on the size-split cells (state_shift.py)
-        self.shared_base = shared_base   # mominsreverseengineering: shared-base-rate + size-state-shift structure ('xsg'), shared_base.py
-        self.fver = FEATURE_VERSION + ("+ss" if state_shift else "") + ("+sb" if shared_base else "")
+        self.shared_base = shared_base   # mominsreverseengineering: shared-base-rate + size-state-shift structure (xsg), shared_base.py; off = pristine v9
+        self.fver = FEATURE_VERSION + ("+sb" if shared_base else "")
         if variant == "v1":
             from method4_ml.baseline import Model as V1
             self.v1 = V1(**v1kw); return
@@ -97,7 +153,7 @@ class Model:
         self.size_feat, self.size_stack, self.size_blend = size_feat, size_stack, size_blend
         self.tick_seed = tick_seed   # which random history ticks become training examples (0 = original sample)
         self.lr_weight, self.lr_spec, self.lr_l2 = lr_weight, tuple(lr_spec), lr_l2
-        self.size_menu, self.menu_k = size_menu, menu_k   # snap sizes onto a learned 2-vector menu per type (size_menu.py)
+        self.size_menu, self.menu_k, self.menu_check = size_menu, menu_k, menu_check   # menu_check: keep a type's snap only if the no-target self-check supports it   # snap sizes onto a learned 2-vector menu per type (size_menu.py)
         self.cshift, self.cs_clip = cshift, cs_clip   # covariate-shift correction strength (0 = off): weights ~ (q(x)/p(x))**cshift
         self.bags = bags             # bagging: stackers trained on `bags` independent tick samples, probabilities averaged
         self.stack = stack
@@ -105,6 +161,8 @@ class Model:
                        min_samples_leaf=min_samples_leaf, max_features=0.7)
         self.gate_kw = dict(GATE if gate is None else gate)
         self.size_kw = dict(SIZES if size_kw is None else size_kw); self.size_pool = tuple(size_pool.split("+")) if isinstance(size_pool, str) else tuple(size_pool)
+        self.stack_loss = stack_loss   # "log" (v8: classifier log-loss), "brier" (squared error on the win bit), "mix" (both, averaged)
+        self.polarity = polarity     # v9: polarity-bank features (polarity.py) for the stackers
         self.workers = workers or min(os.cpu_count() or 1, 8); self.cache = cache
 
     # ---------- gate model (fit on train, cached) ----------
@@ -115,8 +173,6 @@ class Model:
             gm = AdiModel(**self.gate_kw).fit(pub)
             if self.signal_shift:      # signal-dependent cell priors, learned by marginal likelihood on train histories
                 attach_signal_shift(gm, *pooled_split(pub, ("train",)))
-            if self.state_shift:       # shared size-state shift, learned per type on train histories (no labels)
-                attach_state_shift(gm, *pooled_split(pub, ("train",)))
             if self.shared_base:       # xsg: derive pairs from the fitted prior, fit population, relearn structure prior (flips marginalized)
                 attach_shared_base(gm, *pooled_split(pub, ("train",)))
             if self.cache:
@@ -136,9 +192,11 @@ class Model:
 
     # ---------- features (cached) ----------
     def _features(self, pub, split, queries=False):
+        extra = () if not self.polarity and self.shape[0] == "classic" and self.shape[1:] == (40, 24) and self.gm.type_order == type_order([]) \
+            else (self.polarity, repr(self.shape[:1] + self.shape[2:]) if self.shape[0] == "harvest" else repr(self.shape), tuple(self.gm.type_order))
         path = _cache_path(os.path.abspath(pub), split, queries, self.K, self.K_short, self.t_min, self.tick_seed if not queries else 0,
                            json.dumps(self.gate_kw, sort_keys=True), self.signal_shift, self.size_feat,
-                           json.dumps(self.size_kw, sort_keys=True), self.fver)
+                           json.dumps(self.size_kw, sort_keys=True), self.fver, *extra)
         hit = _load(path) if self.cache else None
         if hit is not None:
             return hit
@@ -146,6 +204,8 @@ class Model:
         for r in q:
             eps[r["episode_id"]].append(r)
         jobs = []
+        # long logs with no missing tick are masked like short logs; if a round has none (missing ticks everywhere), allow <= 10%
+        strict_any = any(all(min(seq[r["machine_id"]]) >= 0 for r in eps[e]) for e in eps)
         for e in sorted(eps):
             ms = eps[e]; cut = ms[0]["cutoff"]; sub = {r["machine_id"]: seq[r["machine_id"]] for r in ms}
             if queries:
@@ -153,12 +213,14 @@ class Model:
             rng = random.Random(_seed(e, self.K, self.t_min, *([self.tick_seed] if self.tick_seed else []))); cand = list(range(self.t_min, cut))
             jobs.append((ms, sub, sorted(rng.sample(cand, min(self.K, len(cand))))))
             # short-history augmentation: mask the past like the short_history condition (40 recent + 24 older)
-            if self.K_short and all(min(v) >= 0 for v in sub.values()):
-                rng = random.Random(_seed(e, "short", self.K_short, self.t_min, *([self.tick_seed] if self.tick_seed else []))); lo = max(self.t_min, 64)
-                for t in sorted(rng.sample(range(lo, cut), min(self.K_short, cut - lo))):
+            full = all(min(v) >= 0 for v in sub.values()) or (not strict_any and all(sum(x < 0 for x in v) <= .1 * len(v) for v in sub.values()))
+            if self.K_short and full:
+                lo = max(self.t_min, self.gm.short_obs)
+                rng = random.Random(_seed(e, "short", self.K_short, self.t_min, *([self.tick_seed] if self.tick_seed else [])))
+                for t in sorted(rng.sample(range(lo, cut), max(0, min(self.K_short, cut - lo)))):
                     msub = {}
                     for mid, v in sub.items():
-                        keep = set(range(t - 40, t + 1)) | set(rng.sample(range(t - 40), 24))
+                        keep = short_mask(t, rng, self.shape)
                         msub[mid] = [x if i in keep else -1 for i, x in enumerate(v[:t + 1])]
                     jobs.append((ms, msub, [t]))
         init_args = (self.gm, self.size_models.get("gate") if self.size_feat else None)
@@ -186,12 +248,69 @@ class Model:
             _save(path, out)
         return out
 
+    # ---------- round-one reuse ----------
+    def _r1_pub(self, pub):
+        from common.data import public_dir
+        cands = [self.r1_data] if self.r1_data != "auto" else ["/main_data", os.path.join(os.path.dirname(os.path.abspath(pub).rstrip("/")), "main")]
+        for c in cands:
+            c = public_dir(c)
+            if os.path.exists(os.path.join(c, "train", "history.csv")) and os.path.abspath(c) != os.path.abspath(pub):
+                return c
+        raise FileNotFoundError(f"round-one data not found (tried {cands}); pass r1_data or use r1='off'")
+
+    def _merged(self, pub, r1pub):
+        """A public folder whose train = round-one train + this round's train (disjoint IDs); validation/test = this round's.
+        Written under cache/ (cache on) or a temp dir (organizer /tmp); validation/test are symlinked, not copied."""
+        import tempfile
+        tag = hashlib.sha256((os.path.abspath(pub) + "|" + os.path.abspath(r1pub)).encode()).hexdigest()[:12]
+        d = os.path.join(HERE, "cache", "merged-" + tag) if self.cache else tempfile.mkdtemp(prefix="m4merged-")
+        if os.path.exists(os.path.join(d, "train", "history.csv")):
+            return d
+        os.makedirs(os.path.join(d, "train"), exist_ok=True)
+        for f in ("queries.csv", "history.csv", "labels.csv", "conditions.csv"):
+            parts = [os.path.join(x, "train", f) for x in (r1pub, pub)]
+            if not all(os.path.exists(p_) for p_ in parts):
+                continue
+            with open(os.path.join(d, "train", f), "w", newline="") as g:
+                for i, p_ in enumerate(parts):
+                    with open(p_, newline="") as h:
+                        lines = h.read().splitlines(True)
+                    g.writelines(lines if i == 0 else lines[1:])
+        for sp in ("validation", "test"):
+            if os.path.isdir(os.path.join(pub, sp)) and not os.path.exists(os.path.join(d, sp)):
+                os.symlink(os.path.abspath(os.path.join(pub, sp)), os.path.join(d, sp))
+        return d
+
     # ---------- fit / predict ----------
     def fit(self, pub):
         if self.variant == "v1":
             self.v1.fit(pub); return self
+        if self.r1 != "off":
+            r1pub = self._r1_pub(pub); kw = dict(self._kw, r1="off")
+            if self.r1 in ("frozen", "blend"):
+                self.r1m = Model(**kw).fit(r1pub)
+                if self.r1 == "frozen":
+                    return self
+            elif self.r1 == "combined":
+                self._fit_core(self._merged(pub, r1pub)); return self
+            else:
+                raise ValueError(f"unknown r1 option {self.r1!r}")
+        return self._fit_core(pub)
+
+    def _fit_core(self, pub):
         from sklearn.ensemble import HistGradientBoostingClassifier
         self.gm = self._fit_gate(pub)
+        # data-derived settings (learned from this round's queries / histories, never hard-coded): machine types, short-log shape
+        names = set()
+        for s in ("train", "validation", "test"):
+            if os.path.exists(os.path.join(pub, s, "queries.csv")):
+                names |= {r["machine_type"] for r in load_split(pub, s)[0]}
+        self.gm.type_order = type_order(names); self.ntypes = len(self.gm.type_order)
+        self.shape = learn_short_shape(pub); self.gm.polarity = self.polarity
+        self.gm.short_obs = self.shape[1] + self.shape[2] if self.shape[0] == "classic" else \
+            sorted(len(o) for _, o in self.shape[1])[len(self.shape[1]) // 2]
+        print(f"method4_ml learned: types {self.gm.type_order}, short-log shape {self.shape[0]} "
+              f"{self.shape[1:] if self.shape[0] == 'classic' else ('R', self.shape[2], len(self.shape[1]), 'masks')}, short_obs {self.gm.short_obs}", flush=True)
         self.size_models = {}
         if self.sizes_kind in ("gate", "mix"):
             self.size_models["gate"] = self._fit_sizes(pub, self.gm)
@@ -201,12 +320,16 @@ class Model:
         self.menu = None
         if self.size_menu and "gate" in self.size_models:     # exact two-state size menu, learned from HISTORY ticks only
             path = _cache_path("menu", os.path.abspath(pub), json.dumps(self.gate_kw, sort_keys=True), self.signal_shift,
-                               json.dumps(self.size_kw, sort_keys=True), self.size_pool, tuple(splits), self.menu_k, self.fver)
-            self.menu = _load(path) if self.cache else None
-            if self.menu is None:
-                self.menu = fit_menu(pub, splits, self.size_models["gate"], self.menu_k, self.workers)
+                               json.dumps(self.size_kw, sort_keys=True), self.size_pool, tuple(splits), self.menu_k, self.menu_check, self.fver)
+            hit = _load(path) if self.cache else None
+            if hit is None:
+                rep = {}; menu = fit_menu(pub, splits, self.size_models["gate"], self.menu_k, self.workers, check=self.menu_check, report=rep)
+                hit = (menu, rep)
                 if self.cache:
-                    _save(path, self.menu)
+                    _save(path, hit)
+            self.menu, self.menu_report = hit
+            if self.menu_check:
+                print("method4_ml size-menu self-check:", {t: (round(v["t"], 1), "keep" if v["kept"] else "OFF") for t, v in self.menu_report.items()}, flush=True)
         import numpy as np
         self.clfs = []; base_seed = self.tick_seed; Xall, yall, Wall = [], [], []
         Xq = None
@@ -226,14 +349,18 @@ class Model:
                 from sklearn.ensemble import GradientBoostingClassifier
                 self.clfs += [GradientBoostingClassifier(init=GateInit(), random_state=k, **self.og).fit(X, y) for k in range(self.seeds)]
             else:
-                self.clfs += [HistGradientBoostingClassifier(random_state=k, **self.gbm).fit(X, y, sample_weight=Wall[-1] if Xq is not None else None) for k in range(self.seeds)]
+                sw_ = Wall[-1] if Xq is not None else None
+                if self.stack_loss in ("log", "mix"):
+                    self.clfs += [HistGradientBoostingClassifier(random_state=k, **self.gbm).fit(X, y, sample_weight=sw_) for k in range(self.seeds)]
+                if self.stack_loss in ("brier", "mix"):
+                    self.clfs += [_BrierTrees(random_state=k, **self.gbm).fit(X, y, sample_weight=sw_) for k in range(self.seeds)]
         self.tick_seed = base_seed
         self.beta = None
         if self.lr_weight > 0:   # structured offset-logistic correction of the gate's P(win) (adi round 7 idea, extended)
             import numpy as np
-            XA = np.vstack(Xall); check_layout(XA); yA = np.asarray(yall)
+            XA = np.vstack(Xall); check_layout(XA, self.ntypes); yA = np.asarray(yall)
             off = np.log(np.clip(XA[:, 0], 1e-4, 1 - 1e-4) / (1 - np.clip(XA[:, 0], 1e-4, 1 - 1e-4)))
-            self.beta = fit_offset_logistic(design(XA, self.lr_spec), yA, off, self.lr_l2, w=np.concatenate(Wall))
+            self.beta = fit_offset_logistic(design(XA, self.lr_spec, self.ntypes), yA, off, self.lr_l2, w=np.concatenate(Wall))
         self.sclfs = []
         if self.size_stack:    # P(1x | win) stacker on the same features, winning ticks only
             wi = [i for i, v in enumerate(ypay) if v > 0]; Xs = X[wi]; ys = [int(ypay[i] == 1) for i in wi]
@@ -261,6 +388,16 @@ class Model:
     def predict(self, pub, split):
         if self.variant == "v1":
             return self.v1.predict(pub, split)
+        if self.r1 == "frozen":
+            return self.r1m.predict(pub, split)
+        if self.r1 == "blend":
+            a, b = self._predict_core(pub, split), self.r1m.predict(pub, split); w = self.r1_weight; out = {}
+            for k in a:
+                p = [(1 - w) * x + w * y for x, y in zip(a[k], b[k])]; s_ = sum(p); out[k] = [x / s_ for x in p]
+            return out
+        return self._predict_core(pub, split)
+
+    def _predict_core(self, pub, split):
         q, seq = load_split(pub, split); X, _, ids = self._features(pub, split, queries=True)
         Xraw = X; X = self._sel(X); P = [0.0] * len(X)
         for c in self.clfs:
@@ -269,9 +406,9 @@ class Model:
         pw = {qid: self.blend * p + (1 - self.blend) * x[0] for qid, p, x in zip(ids, P, Xraw)}
         if self.beta is not None and self.lr_weight > 0:
             import numpy as np
-            XQ = np.asarray(Xraw, float); check_layout(XQ)
+            XQ = np.asarray(Xraw, float); check_layout(XQ, self.ntypes)
             off = np.log(np.clip(XQ[:, 0], 1e-4, 1 - 1e-4) / (1 - np.clip(XQ[:, 0], 1e-4, 1 - 1e-4)))
-            lr = lr_predict(design(XQ, self.lr_spec), self.beta, off)
+            lr = lr_predict(design(XQ, self.lr_spec, self.ntypes), self.beta, off)
             pw = {qid: self.lr_weight * float(l) + (1 - self.lr_weight) * pw[qid] for qid, l in zip(ids, lr)}
         key = (os.path.abspath(pub), split, tuple(self.size_models))   # sizes do not depend on blend / GBM: reuse
         cache = self.__dict__.setdefault("_sz", {})

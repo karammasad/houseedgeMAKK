@@ -8,23 +8,30 @@ COL = dict(pw=0, pw_nc=1, p_chg=2, p_none=3, top1=4, top2=5, rec=6, lg=7, ep_chg
            lag1=12, rate10=20, rate20=21, rate40=22, nobs=23, miss40=24, type=25, signal=26, a=27, adev=28)
 
 
-def check_layout(X):
-    """Fail loudly if the column layout drifts from features3 (a miscounted index silently ruined an earlier experiment)."""
-    assert set(np.unique(X[:, COL["type"]])) <= {0.0, 1.0, 2.0}, "type column wrong"
-    assert set(np.unique(X[:, COL["signal"]])) <= {-1.0, 0.0, 1.0}, "signal column wrong"
+NBASE = 29   # columns of features3 before the optional polarity bank (polarity.NFEAT columns, appended last)
+POL = dict(nb_z=29, nb_sh=30, sz_z=33, sz_sh=34, nx_z=37, nx_sh=38)
+
+
+def check_layout(X, ntypes=3):
+    """Fail loudly if the column layout drifts from features3 (a miscounted index silently ruined an earlier experiment).
+    Types and signals are whatever the round uses (learned in fit), so only their form is checked."""
+    from method4_ml.polarity import NFEAT
+    assert set(np.unique(X[:, COL["type"]])) <= set(map(float, range(ntypes + 1))), "type column wrong"   # index ntypes = a type unseen in fit
+    sg = X[:, COL["signal"]]; assert np.all(np.isfinite(sg)) and np.all(sg == np.round(sg)), "signal column wrong"
     assert np.all((X[:, COL["pw"]] >= 0) & (X[:, COL["pw"]] <= 1)), "pw column wrong"
     assert np.all(X[:, COL["nobs"]] >= 0) and np.all(X[:, COL["nobs"]] == np.round(X[:, COL["nobs"]])), "nobs column wrong"
     assert np.all(np.abs(X[:, COL["adev"]]) < 1) and np.all((X[:, COL["a"]] >= 0) & (X[:, COL["a"]] <= 1)), "size columns wrong"
-    assert X.shape[1] == 29, f"expected 29 features, got {X.shape[1]}"
+    assert X.shape[1] in (NBASE, NBASE + NFEAT), f"expected {NBASE} or {NBASE + NFEAT} features, got {X.shape[1]}"
 
 
-def design(X, spec):
-    """Columns per spec. 'd' = P(1x|win) deviation from type mean; P = gate P(win); typed terms get one column per machine type."""
+def design(X, spec, ntypes=3):
+    """Columns per spec. 'd' = P(1x|win) deviation from type mean; P = gate P(win); typed terms get one column per machine type.
+    'pol' (needs the polarity bank): each bank's best predicted shift, weighted by how far its evidence is above noise."""
     P = np.clip(X[:, COL["pw"]], 1e-4, 1 - 1e-4); d = X[:, COL["adev"]]; ty = X[:, COL["type"]].astype(int)
     short = (X[:, COL["nobs"]] <= 64).astype(float); sig = X[:, COL["signal"]]
     cols = []
     def typed(v):
-        for t in range(3): cols.append(v * (ty == t))
+        for t in range(ntypes): cols.append(v * (ty == t))
     if "d" in spec: typed(d * P); typed(d * (1 - P))                      # adi's 6-term correction
     if "dshort" in spec: typed(short * d * P); typed(short * d * (1 - P))
     if "chg" in spec: typed(X[:, COL["p_chg"]] * (2 * P - 1))
@@ -32,6 +39,9 @@ def design(X, spec):
     if "sig" in spec: typed(sig * P); typed(sig * (1 - P))
     if "ep" in spec: cols += [X[:, COL["ep_shift"]], X[:, COL["ep_chg"]] * (2 * P - 1)]
     if "short" in spec: typed(short * (2 * P - 1))
+    if "pol" in spec and X.shape[1] > NBASE:
+        for b in ("nb", "sz", "nx"):
+            cols.append(X[:, POL[b + "_sh"]] * np.clip(X[:, POL[b + "_z"]] / 2 - 1, 0, 2))
     return np.column_stack(cols) if cols else np.zeros((len(X), 0))
 
 

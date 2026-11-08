@@ -11,7 +11,7 @@ def report(tag):
     t = os.times(); ru = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss; rc = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
     print(f"\n[{tag}] wall {time.time() - T0:.0f}s | stage when stopped/finished: {STAGE[0]}")
     for k, v in sorted(TIMES.items(), key=lambda kv: -kv[1]): print(f"   {k:34s} {v:7.0f}s")
-    print(f"   CPU-seconds (user+sys, self {t.user + t.system:.0f}, children {t.children_user + t.children_system:.0f}); peak RSS self {ru / 1e6:.2f} GB, largest child {rc / 1e6:.2f} GB", flush=True)
+    print(f"   CPU-seconds (user+sys, self {t.user + t.system:.0f}, children {t.children_user + t.children_system:.0f}); peak RSS self {ru / 1e6:.0f} MB, largest child {rc / 1e6:.0f} MB (macOS reports bytes; Linux reports KiB)", flush=True)
 def on_alarm(sig, frm):
     report("TIMEOUT at 29 minutes"); os.killpg(0, signal.SIGKILL)
 signal.signal(signal.SIGALRM, on_alarm); signal.alarm(LIMIT)

@@ -107,6 +107,9 @@ def final(pub, out, kwargs, data_arg, tuning_only=False, workers=None):
         ap, _ = points(pub, pred, audit, maxp); fp, fr = points(pub, pred, None, maxp); res.update(audit=ap, full=fp, ratios=fr)
         print(f"        audit {ap:.4f}  full {fp:.4f}  full ratios " + "  ".join(f"{c} {fr[c]:.5f}" for c in CONDITIONS))
     csv_path = os.path.join(out, "submission.csv"); write_predictions(csv_path, m.predict(pub, "test"))
+    m.cache = False; m.__dict__.pop("_sz", None)               # checkpoint for method4_ml.make_entry --model-pkl (package without refitting)
+    with open(os.path.join(out, "model.pkl"), "wb") as fh:
+        pickle.dump(m, fh, protocol=pickle.HIGHEST_PROTOCOL)
     chk = subprocess.run([sys.executable, os.path.join(HERE, "..", "kit", "check_submission.py"), csv_path, "--data", pub], capture_output=True, text=True)
     res["checker_ok"] = chk.returncode == 0                      # a checker problem is REPORTED, never allowed to throw away a finished fit
     if not res["checker_ok"]:

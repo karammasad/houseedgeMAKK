@@ -3,6 +3,74 @@
 Ledger of hypotheses, tests and verdicts. Newest at the top. Each entry: hypothesis, test, numbers, verdict, why.
 Reverts stay here as negative results. See CONTROL.md for the keep rule.
 
+## Entry 17: feasibility check of the shared-base + cook pool (overfitting, leakage, 2-core runtime)
+
+**Leakage: PASS for cook.** `experiments/leak_cook.py`: Adi's current `adi.cook` fitted and predicted on a copy of the kit with EVERY answer file deleted (only queries.csv and history.csv of train / validation / test kept) with a file-open audit hook:
+the run completed, only those six files were opened, and validation and test predictions equal the full-kit run exactly (max difference 0.0, which also shows a fresh fit reproduces the earlier predictions). Static scan: the only label read on cook's import path is the neighbour-adjust option (`adi/model.py:309`), never enabled by its configuration. Our shared-base model: PASS (Entry 12).
+**Overfitting: inconclusive; the pool's benefit is thin and concentrated.** Weight fixed at .5 in advance (no tuning). Pool vs plain v8 +0.0708 (96 episodes, 95% CI [+0.013, +0.136]) but the top 5 episodes carry 66%, the top 10 98%, and without the top 10 the gain is +0.001; 62 / 96 episodes better.
+Pool vs OUR shared-base model +0.0142: top 5 carry 192%, without the top 10 -0.032, 51 / 96 better, tuning +0.024 / audit +0.004. Adi's own v8 + cook pool shows the same shape (+0.030; top 5 carry 116%, without the top 10 -0.023, 53 / 96).
+Cook alone is no better than v8 (tuning +0.0075, audit -0.0094). The pooled gain is jackpot-driven (the 48 most jackpot-heavy episodes +0.073, the 48 least -0.003). Dozens of variants have been judged on this one 96-episode validation set across the team, so each +0.02 to +0.05 step probably overstates the true gain.
+**Runtime (30 minutes, 2 cores): feasible ONLY as a saved-checkpoint entry.** Measured, `experiments/time_cook_2core.py` (saved cook model, 2 workers / 2 threads, hard kill at 29 min): load 0.1 s + predict(test) 196.8 s = 197 s wall, 192 CPU-seconds, peak memory 44 MB, output identical to the earlier test CSV (0.0).
+Ours with a checkpoint: packaged predict 31 s (Entry 14). A pooled checkpoint rerun is therefore about 3.8 minutes (31 s + 197 s, sequential). Fit side: cook fit + predict 1069-1102 s on 8 cores (Adi: 527 s on his laptop); ours about 17 min fresh on 8 cores; so roughly 20-35 min of fitting inside the Round 2 window, once.
+WITHOUT a checkpoint (refit in the organizers' rerun) it is infeasible: ours alone was 27.2 min on 2 cores and cook's fit is of the same order again.
+**Not tested:** a combined package in ONE process. Static check: cook patches `_split_mixture`, `machine_tables`, `win_probability_grid` and GateSizes `_win_posterior` / `fit` / `predict`; it saves the original `_split_mixture` at import, so in a combined package it falls back to our rewritten version (same signature, equal to the original within 3e-14); our xsg path uses a separate function.
+`adi/gate.py`, `adi/model.py`, `method2_sizes/sizes.py` and `common/` are unchanged on main since our snapshot, so the combination is a merge of cook's newer files with our edits. An identity check (pooled predictions equal the separately computed members) is still needed; estimated 1-2 h plus one cook fit.
+**Verdict.** Technically feasible with checkpointing (about 4 min rerun), leak-free, but the evidence that it improves on our shared-base model alone is weak. Cheapest way to benefit: offer our shared-base model to Adi as a pool member (his selector, checkpoint builder and exact-pins environment already exist) instead of building a second pipeline here.
+
+## Entry 16: pooling our shared-base model with Adi's cook (his round-14 recipe): best validation score so far, but the increment over ours is small and not distinguishable
+
+**Source.** Adi's round 14 (origin/main `ed85b6b`): a fixed 50/50 linear pool of v8 and his standard-library `adi.cook` (r2 inner, adi size coupling, size menu) gives 58.337 / 58.321 / 58.327 (tuning / audit / full), saved as a checkpoint entry that reruns in 132 s. He did not pool our shared-base model. Run here from a scratch copy of `main` (his files untouched): `experiments/run_cook_main.py`, 1069 s for fit + validation + test.
+**Sanity (reproduces his numbers):** cook alone tuning 58.318, v8 + cook pool tuning 58.338, full 58.328 (his 58.327). Weight fixed at 0.5 in advance (not tuned; tuning-half weights .25 / .5 / .75 give 58.348 / 58.361 / 58.358, flat).
+
+| model | tuning | audit (consumed, info only) | full (kit scorer) | stable | short | drift | shared |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| v8 baseline | 58.311 | 58.289 | 58.2981 | .01704 | .05671 | .02242 | .02060 |
+| v8 + shared-base (ours) | 58.338 | 58.378 | 58.3547 | .01548 | .05485 | .02290 | .01955 |
+| adi.cook | 58.318 | 58.279 | 58.2973 | .01861 | .05507 | .02275 | .02041 |
+| v8 + cook pool (Adi's recipe) | 58.338 | 58.322 | 58.3281 | .01754 | .05501 | .02212 | .01998 |
+| **shared-base + cook pool (new)** | **58.361** | 58.382 | **58.3689** | .01662 | .05387 | .02223 | .01906 |
+| new pool vs ours | +0.024 | +0.004 | +0.0142 | +7.4% | -1.8% | -2.9% | -2.5% |
+
+Kit scorer on the pool: 58.368919 / 60. Paired episode bootstrap (96 validation episodes): pool vs ours +0.014, 95% CI [-0.033, +0.061], P(better) .72, better in 51 of 96 episodes (tuning half alone: +0.024, CI [-0.034, +0.082], P .80);
+pool vs plain v8 +0.071, 95% CI [+0.013, +0.136], P .993. Pooling adds about +0.03 on top of v8 but only about +0.014 on top of ours: the two gains overlap (about 80% additive: 0.057 + 0.030 predicted, 0.071 observed).
+Stable gets worse (cook is weaker there: .0186 vs .0155); short, drift and shared improve. A condition-gated pool was already falsified by Kareem (#42, #43), so the weight stays fixed.
+**Verdict.** The pool is the best validation score so far (58.3689) and is credibly better than plain v8, but the increment over our shared-base model alone is inconclusive and below the +0.05 tuning bar set in advance, so it is NOT adopted on its own evidence; it is consistent with Adi's independent +0.03.
+**Not done / risks.** No pooled checkpoint entry exists for this combination: cook patches `adi.gate` / `GateSizes` in-process and our folder's gate carries the xsg and optional state-shift edits (`_split_mixture` is touched by both), so combining them in one process needs an isolation and identity check (about 1-2 h); cook alone took 1069 s here (Adi: 527 s).
+
+## Entry 15: win-informed size direction (the one approved experiment): STOP by the pre-stated rule; effect real in direction, too small to adopt
+
+**Idea.** Win outcomes carry information about the size direction d (win rate differs by size state, shift gamma = .46 / .53 / .30), but the size model updates d from sizes only; win history reaches it only through the lag prior P(k).
+**Derivation (no double counting).** For a size lag k: P(d | w, y, k) is proportional to P(d) * [sum over structures and flip times of P(s)P(tau) L_win(w | s, tau, d)] * L_size(y | k, d). The size model already uses win data once, through P(k); the hook only replaces its constant direction prior
+(for the {big} partition, only where an xsg structure with that size lag exists) by sum_w w * sigmoid(logit(dl) + lam * LLR), with weights normalised WITHIN the structures sharing lag k, so k is never re-weighted and the prior is added once. Rates, on/off roles and polarity are integrated out as in the gate.
+Each tick's win/loss enters once (L_win) and each win's size once (L_size); past payouts are conditioning only. Code: `adi/gate._shared_dir_ll`, `method4_ml/shared_base.win_direction_evidence`, optional hook in `method2_sizes/sizes.py` (`win_dir_lam`, off by default).
+**Verification** (`experiments/verify_wd.py`): lam = 0 vs the ORIGINAL committed size model max |diff| 0.0 over 2,304 queries; per-direction win likelihood vs brute force 1.4e-14; product form vs the exact joint posterior over d 7.0e-14 over 540 cases (including direction priors .3 / .7). Hook is live when on (lam .5 moves predictions by up to .10).
+**Training-only held-out diagnostic** (`wd_diag.py`; 576 long train machines, 72 episodes, 25,392 pseudo-query rows, targets at 45-58% of the log, prefixes n40 / real short layout / full, lambda in {-.5, 0, .25, .5, 1} chosen on one episode half and scored on the other; 330 s on 8 cores).
+Rule fixed in advance: proceed only if on n40 and short64 the cross-fitted size log-loss improves with an episode-clustered 95% CI below 0, the shuffled-history control shows no gain, and the five-category squared error does not worsen.
+
+| info | size log-loss change (cand - base) | 5-class sq err change x1e-4 | SHUFFLED control: size log-loss | control: 5-class x1e-4 |
+| --- | --- | --- | --- | --- |
+| n40 | -0.00182 [-0.00419, +0.00029] | -4.12 [-9.19, +0.39] | +0.00083 [+0.00015, +0.00160] | +2.56 [+0.98, +4.44] |
+| short layout | -0.00114 [-0.00346, +0.00104] | -2.76 [-7.64, +1.83] | +0.00057 [-0.00017, +0.00135] | +2.15 [+0.58, +3.93] |
+| full | -0.00212 [-0.00380, -0.00044] | -3.50 [-7.07, -0.17] | +0.00040 [-0.00017, +0.00099] | +1.02 [-0.19, +2.35] |
+
+Learned lambda +1.0 in both halves (the Round 1 sign link holds; negative lambda lost). By type at the short layout all intervals include 0 (balanced -.0038, jackpot +.0006, steady +.0002).
+**Verdict: STOP (rule not met).** The direction is right and consistent and the shuffled control gets WORSE (a wrong machine's win history hurts), so the evidence is machine-specific and not an artifact; but the gain is about 0.1-0.2% of size log-loss and the interval on both short settings includes 0.
+Final five-category error does not worsen. No official tuning run was made; no audit was used. The hook stays in the folder as an off-by-default option (lam = 0 reproduces the shipped model exactly). Not worth adopting on this evidence; a larger sample (the Round 2 kit) is the only way to tell +0.1% from 0.
+Runtime of this experiment: verification < 1 min, diagnostic 330 s (the first run also took 306 s before a control-baseline bug of mine, fixed and rerun with the same protocol). Fit-time cost of the hook in the full pipeline was NOT measured because no full run was made.
+
+## Entry 14: deployment fix (checkpoint packaging): rerun 27 min -> about 30 s, predictions unchanged
+
+Problems found in `method4_ml/make_entry.py` (our copy): (1) the packaged entry refits from scratch in the organizers' rerun (27.2 min on 2 cores, Entry 13); (2) packaging fits TWICE (CSV, then the fresh-unzip check);
+(3) it refused to build unless installed packages equalled a stale pin file (scikit-learn 1.9.1 vs 1.8.0 here) and `--allow-mismatch` would ship pins that did not produce the CSV;
+(4) it looked for `kit/` under this folder, which does not exist (crash after the long fit); (5) `workers` came from `os.cpu_count()`, which a 2-core container may report as the host's.
+Fix (no change to model maths or predictions): fit once or reuse a model from `adapt.py` (`--model-pkl`), ship `model.pkl` in the ZIP, `predict.py` loads it with 2 workers / 2 threads and falls back to a full refit if the checkpoint is missing or unreadable;
+requirements are written from the installed packages that produced the model (warning, not failure, versus the team pin file); kit path resolved; adapt.py saves `model.pkl` per candidate.
+**Verified on main with the candidate** (`--use-cache` for the fit only): packaged predict.py 31 s, fresh-unzip rerun 30 s, byte-identical (max difference 0.0), identical to the in-memory fitted model (0.0) and to the earlier test CSV (sha256 f907a388...);
+official checker VALID (1536 queries); ZIP 3.1 MB (model.pkl 8.1 MB); the whole build took 1 min 56 s with the cached fit (a fresh fit adds one 17-27 min fit, once, instead of twice).
+Fallback tested: with a corrupted model.pkl predict.py prints a warning and starts refitting. NOT tested: the pinned package versions (the ZIP pins the installed 1.8.0 / 2.4.4 / 1.17.1, which must be installable by the organizers), and a fresh no-cache end-to-end build.
+Also fixed: the deployment script printed megabytes as gigabytes (peak memory is about 240 MB main process, 95 MB largest worker).
+Round 2 flow: `adapt.py --stage full-select` (fits each candidate once, saves model.pkl) -> `python3 -m method4_ml.make_entry --data <kit> --out <dir> --model-pkl <chosen>/model.pkl` (no refit).
+
 ## Entry 13: deployment feasibility (official 2-core / 30-minute rerun): MARGINAL as packaged; a saved checkpoint is the fix
 
 **Official limits** (`kit/README.md`, `RULES.md`, `SUBMISSION_README.md`): 30 minutes, two CPU cores, 16 GiB RAM, no network, `/tmp` 128 MiB, `/output` 32 MiB, output within 1e-8 of the submitted CSV.
@@ -298,3 +366,29 @@ in the fingerprint's cell-prior `k` values).
 - Hypothesis: none. This is the reference every later keep check compares against.
 - Test: `python3 run.py score --name "v8 baseline"` on `../data/main`.
 - Expected (from Kareem's log, e46c44d): tuning 58.309, audit 58.287, full 58.297. Verdict: reference.
+
+## Entry 18: shared-base re-applied on Kareem's v9 (origin/main 0f201ad)
+Copied v9 `method4_ml` (features3, model, size_menu, logit_stack, round2, polarity, test_no_leakage) into this folder; re-applied only the shared-base wiring
+(`shared_base` option, `attach_shared_base` call in `_fit_gate`, `self.fver` cache-key suffix; off = pristine v9). Shared packages (adi/gate.py, adi/model.py, method2_sizes) unchanged on main, so our xsg additions apply as is. No teammate file touched.
+Tuning half only (no audit use), official kit scorer, /60:
+| run | tuning | stable | short | drift | shared |
+|---|---|---|---|---|---|
+| v9 patched tree, shared_base off | 58.3107 | .02035 | .05276 | .02723 | .01555 |
+| v9 + shared-base | 58.3376 | .01854 | .05198 | .02827 | .01519 |
+Identity: predictions of both runs equal the earlier v8 and v8+shared-base predictions exactly (max abs diff 0.0 over 768 keys), i.e. v9 at default settings reduces to v8 numerically and the shared-base gain (+0.0269 tuning) is reproduced. v9 learned types [steady, balanced, jackpot], short_obs 64, menu self-check keeps all three. Window protection (<=0.45 ceiling) still not implemented.
+
+## Entry 19: sequence-level (exact forward-backward) decoding for the (1,3) configuration -- NO-GO
+Production candidate frozen first: `production.json` (v9 + shared-base, tuning 58.3376 / full 58.3547), git tags `prod-v9-sb` (b60d222) and `champion-v8` (e8ba0d0). Nothing in the production path was edited; code is in `experiments/seqdecode/`.
+**1. Sufficiency.** Gate at t = w[t-1] XOR w[t-3], size split at lag 1. Transition and emission read only (c_{t-1}, w_{t-2}, w_{t-3}) = 3x2x2 = 12 states; next state (c_t, w_{t-1}, w_{t-2}); with polarity 24 states, exact forward recursion, missing tick = sum over 3 categories. Sufficient ONLY with machine rates (6 cell rates, P(big|win)) held fixed; with unknown rates the latent counts are exchangeable (not Markov), so no finite-state decoder exists. Production drops every tick with a missing input (gate_value returns None) and integrates rates with Beta/logit-normal priors.
+**2. Validation.** `test_brute.py`: 300 random tiny sequences (u 6-9, up to 5 missing, all flip times, all completions): max predictive difference 2.6e-15, joint 2.9e-15 vs brute force. Fully observed: local = exact to 2e-16.
+**3. Known parameters, synthetic (ground truth, 9,000 machines, params from the fitted shared-base population):** MSE vs the TRUE 3-category distribution identical for local and exact at every mask (n40/short64/n80/full all 78.80e-4, paired difference 0.000 [0.000, 0.000]); |p_local - p_exact| mean 2e-8 at short64, max 6e-5. Reason: an isolated scattered tick has an unknown gate bit, so its win probability is the same under both polarities and it carries no flip information.
+**4. Known (plug-in) parameters, real held-out train machines** (576 long machines, 72 episodes, 9,504 rows; plug-in = profile ML on the machine's full pre-u history, an oracle given identically to both). Five-category squared error x1e-4, production sizes, exact - local paired, episode-clustered 95% CI:
+| mask | production V0 | local | exact | exact - local |
+|---|---|---|---|---|
+| n40 | 3454.1 | 4609.9 | 4610.0 | +0.10 [-0.35, +0.54] |
+| short64 | 3468.5 | 4607.0 | 4606.3 | -0.72 [-3.28, +1.36] |
+| n80 | 3457.7 | 4611.9 | 4611.9 | -0.04 [-0.12, +0.04] |
+| full | 3444.8 | 4608.3 | 4608.3 | 0 |
+By type, by gate-explained vs weak, by flipped vs not: every CI includes 0; gate-explained machines differ by <1e-6. Runtime: exact 0.65 ms vs local 0.25 ms per prediction (negligible).
+**5. Ceiling.** The whole missing-history gap of production V0 (mask minus full, five-cat x1e-4): n40 +9.3 [-23.8, +41.9], short64 +23.7 [-4.8, +52.0], n80 +12.9. The exact decoder recovers -0.72 (about 3%, CI includes 0, upper bound 3.3e-4 = 0.1% of the error 3,450e-4). Most of the gap is parameter/structure scarcity (earlier decomposition: scarcity +12.5, structure ambiguity +10.0), which state decoding cannot touch.
+**Verdict: NO-GO.** Estimated-parameter repeat not run (first result not promising, per the stop rule). Caveat: plug-in model covers only the (1,3) xs structure, so absolute plug-in errors are worse than production on weak-gate machines; the paired exact-vs-local comparison is unaffected.
