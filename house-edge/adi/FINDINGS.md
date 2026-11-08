@@ -488,3 +488,28 @@ Weight is flat (w 0.4 / 0.5 / 0.6 -> full 58.326 / 58.327 / 58.326), both halves
 Leakage check (`adi/cook/leak_pool.py`): full pool fit + predict on a copy of the kit with every answer file deleted (validation
 labels / targets / conditions / reference, train conditions), every opened file logged incl. forked workers: only queries.csv and
 history.csv of train / validation / test were opened; validation and test predictions identical to the clean run (max diff 0.0).
+
+## Round 15: Momin's shared-base v8 + cook (50/50) - reproduced, packaged, and checked on fresh data
+
+Momin's branch (31cfced) already scored this pool; reproduced here under the pinned stack from a read-only `git archive` snapshot of
+origin/mominsreverseengineering (his files untouched): shared-base v8 58.340 / 58.379 / 58.356, pool 58.363 / 58.382 / 58.370
+(his 58.361 / 58.382 / 58.369). vs the v8 + cook pool: +0.026 tuning, +0.042 full, bootstrap P .996 (his audit half was consumed).
+
+**Fresh-data check** (models fitted on main, predicting the synthetic main-like kit /tmp/sim_base, which no decision used; /40):
+
+| | tuning | audit | full |
+| --- | --- | --- | --- |
+| Kareem v8 | 38.153 | 38.447 | 38.294 |
+| Momin shared-base v8 | 38.123 | 38.453 | 38.281 |
+| adi.cook | 38.299 | 38.466 | 38.379 |
+| v8 + cook pool | 38.254 | 38.481 | 38.363 |
+| shared-base + cook pool | 38.243 | 38.491 | 38.362 |
+
+shared-base's main-validation gain (+0.057) does not replicate (-0.013 vs plain v8 here), so the extra +0.042 of its pool is not
+supported out of sample; the two pools tie. Both pools beat v8 (+0.07), and cook alone is best on this kit (one kit, 96 episodes;
+the simulator approximates the real generator). Decision: keep the v8 + cook pool as the runbook candidate; shared-base not added.
+
+`adi/pool2_entry.py`: two-process pooled checkpoint entry for members that cannot share one interpreter (different copies of the
+same packages / overlapping patches): each member in its own folder with its own code + checkpoint, run as a separate process,
+then averaged. Tested on this pool: CSV = pool of the members' in-process predictions (diff 0), byte-identical fresh-unzip rerun,
+kit check OK, rerun 127 s, ZIP 4.0 MB.
