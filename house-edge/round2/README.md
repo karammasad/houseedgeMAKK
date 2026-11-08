@@ -112,3 +112,23 @@ Reads `round2/results/adi_r2/...` for its chosen candidate + scores (see `adi/r2
 - 10:26 CST: kit not yet released. Worktree `round2-live` created off fresh `origin/main` (ea93475). `data/main`
   symlinked in (read-only rehearsal data). `round2/score_pred.py` written (generic validation scorer for any
   pickled prediction dict). Main-round fingerprint baseline running -> `round2/results/fp_main.json`.
+- 11:30 CST: FINAL RESULT. All four candidates finished, scoreboard below (official metric, max_points=20).
+  Adi had already submitted plain thanos (19.5913 full) before the other candidates landed. Nothing beat it;
+  the no-gate-fix variant is statistically tied (+0.0002, pure noise, far below the adoption bar) and everything
+  else trails by 0.11-0.26 points. **No replacement submitted. Plain thanos stands as the team's adaptation
+  entry.**
+
+  | candidate | tuning | audit | full |
+  | --- | --- | --- | --- |
+  | thanos (plain E2, submitted) | 19.5304 | 19.6271 | **19.5913** |
+  | thanos + no-gate fix | 19.5305 | 19.6274 | 19.5915 (tied within noise, not adopted) |
+  | method4_ml sb (v9+shared-base, chosen by its own internal rule over base) | 19.3683 | 19.5591 | 19.4795 |
+  | adi.r2 (stdlib) | 19.3340 | 19.4940 | 19.4300 |
+  | method4_ml base (v9) | 19.3444 | n/a | n/a |
+
+  Why thanos wins decisively: it's the only candidate using the full exact-generator-posterior approach (joint
+  probabilistic model per machine, every hyperparameter fit by marginal likelihood on histories only); the
+  others are gate+tree-stacker or frequency-based approaches with less structural fidelity to this generator.
+  The round-1 champion's margin over the field (which was much smaller, ~58.6 vs ~58.3-58.4 out of 60) widened
+  substantially on round 2's data (19.59 vs ~19.3-19.4 out of 20) -- consistent with thanos's design generalizing
+  well to a kit with different (re-estimated, not hardcoded) lag structures.
