@@ -80,4 +80,7 @@ if __name__ == "__main__":
     m = test_no_answer_files_read() if "--io" in sys.argv else Model(bags=1, seeds=1).fit(PUB)
     sz = m.size_models["gate"] if m.size_feat else None
     test_features_ignore_the_future(m.gm, sz); test_missing_is_not_a_loss(m.gm, sz)
+    m.gm.polarity = True     # v9 polarity bank (cross-machine features): the same future-scramble check must hold
+    test_features_ignore_the_future(m.gm, sz, n_ep=6, seed=1); m.gm.polarity = False
+    print("OK 1b: polarity-bank features ignore ticks >= t of every machine")
     print("ALL LEAKAGE CHECKS PASSED")

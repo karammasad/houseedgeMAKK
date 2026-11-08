@@ -78,7 +78,7 @@ def fit_menu(pub, splits, sz, k=8, workers=1, iters=6, check=False, min_t=1.0, r
     if S is None:
         S = [_job(j) for j in jobs]
     S = np.array(S, float); menu = {}
-    for ty in TYPES:
+    for ty in sorted(set(TY.tolist())):     # every machine type the round has (learned, not the main round's three)
         St, Yt = S[TY == ty], Y[TY == ty]
         if len(St) < 50:
             continue
