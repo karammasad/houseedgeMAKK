@@ -137,3 +137,14 @@ time,user,method,kwargs,note,tuning,audit,tune_stable,tune_short_history,tune_dr
 2026-11-07 18:10,adinounou,adi.r2,"{""win"": {""xor_order"": 2}}",adi r2: wide minus triples,58.1850,,0.02322,0.05491,0.02680,0.01984,212.2
 2026-11-07 18:10,adinounou,adi.r2,"{""win"": {""size_split"": ""small""}}",adi r2: wide minus both-lag split,58.1691,,0.02292,0.05415,0.02831,0.02052,223.8
 2026-11-07 18:14,adinounou,adi.r2,{},adi r2: wide + adaptive size-lag range,58.2384,,0.02291,0.05489,0.02718,0.01601,195.1
+2026-11-07 18:36,adinounou,adi.cook,"{""kappa"": 20}",cook: hierarchical split cells kappa 20,58.1743,,0.02297,0.05261,0.03138,0.01857,243.1
+2026-11-07 18:36,adinounou,adi.cook,"{""kappa"": 80}",cook: hierarchical split cells kappa 80,58.1666,,0.02605,0.05187,0.03072,0.01744,243.1
+2026-11-07 18:36,adinounou,adi.cook,"{""kappa"": 300}",cook: hierarchical split cells kappa 300,58.1312,,0.02832,0.05191,0.03066,0.01770,243.3
+2026-11-07 18:36,adinounou,adi.cook,"{""kappa"": 5}",cook: hierarchical split cells kappa 5,58.1345,,0.02322,0.05497,0.03092,0.01924,243.7
+2026-11-07 18:40,adinounou,adi.cook,"{""kappa"": 200}","cook: hier split cells, short logs only, kappa 200",58.2518,,0.02265,0.05185,0.02876,0.01678,196.8
+2026-11-07 18:40,adinounou,adi.cook,"{""kappa"": 40}","cook: hier split cells, short logs only, kappa 40",58.2478,,0.02260,0.05225,0.02874,0.01673,196.9
+2026-11-07 18:40,adinounou,adi.cook,"{""kappa"": 80}","cook: hier split cells, short logs only, kappa 80",58.2512,,0.02263,0.05194,0.02875,0.01676,197.0
+2026-11-07 18:44,adinounou,adi.cook,"{""kappa"": 200, ""base"": {""sizes"": ""gate"", ""gate_cell_prior"": ""npmle"", ""gate_couple"": true, ""gate_couple_iters"": 20, ""gate_tied"": true, ""gate_tie_weight"": ""learn"", ""gate_joint_em"": true, ""win_model"": ""adi"", ""win_kwargs"": {""max_lag"": 12, ""and_pairs"": true, ""prior_flips"": true, ""prune"": 0.01, ""floor"": 0.05, ""cell_prior"": ""learn"", ""cell_group"": ""type"", ""p_change_short"": ""learn"", ""size_split"": true, ""cell_signal"": true, ""machine_shift"": ""short""}}}",cook: kappa 200 short + short-only hotness prior,58.2626,,0.02262,0.05114,0.02875,0.01677,240.6
+2026-11-07 19:16,adinounou,adi.cook,"{""inner"": ""r2""}","adi cook on adi.r2 (round-two widened model) + short-log hierarchy, kappa by train evidence",58.2773,58.2082,0.02289,0.05228,0.02712,0.01596,484.3
+2026-11-07 19:17,adinounou,adi.cookblend,"{""workers"": 2}","adi cook: 50/50 cook (short-log hierarchical split cells, kappa by train evidence) + stack, workers 2",58.2963,58.2124,0.02147,0.05210,0.02704,0.01627,572.5
+2026-11-07 19:27,adinounou,adi.cookblend,{},adi cook: 50/50 cook + stack (stack unpatched),58.2939,58.2282,0.02146,0.05230,0.02703,0.01628,515.9

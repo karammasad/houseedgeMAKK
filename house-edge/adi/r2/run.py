@@ -6,22 +6,24 @@
 2. Fits the candidates on the new kit's train data:
      r2    adi.r2      wide, re-learned structure family (see adi/r2/model.py)
      main  adi.sizewin the exact 58.21 main-round model settings (safety net)
+     cook  adi.cook    adi.r2 + two-level hierarchical size-split cells on short logs, kappa per type by train
+                       evidence (main data: tuning 58.277 / audit 58.208 vs adi.r2 58.238 tuning)
 3. Scores each on the new validation set (tuning / audit / full, per condition) with the official metric.
 4. Picks the candidate with the higher TUNING-half score (the audit half stays an honest check; a candidate is only
-   preferred if its audit doesn't drop by more than 0.3 points relative to the other).
+   preferred if its audit doesn't drop by more than 0.3 points relative to the best other audit).
 5. Prints what the chosen model learned (structures, cell priors, signal slopes, flip prior, correction).
 6. Writes <out>/submission.csv (test), runs the kit checker, and builds the verified upload ZIP with
    adi.make_entry (fresh-unzip rerun must be byte-identical) into <out>/entry/.
 Upload <out>/entry/submission.csv and <out>/entry/entry.zip (identical CSV to <out>/submission.csv).
 
-Options: --only r2|main (skip the comparison), --no-build (skip ZIP), --workers N.
+Options: --only r2|main|cook (skip the comparison), --no-build (skip ZIP), --workers N.
 """
 import argparse, importlib, json, os, subprocess, sys, time
 from common.data import public_dir, write_predictions
 from common.evaluate import folds, points, CONDITIONS
 
 HERE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-CANDIDATES = {"r2": ("adi.r2", {}), "main": ("adi.sizewin", {})}
+CANDIDATES = {"r2": ("adi.r2", {}), "main": ("adi.sizewin", {}), "cook": ("adi.cook", {"inner": "r2"})}
 
 
 def describe(m):
@@ -33,6 +35,8 @@ def describe(m):
         out.append(f"  cell prior {t:8s} on {v[0]:.2f} (k {v[2]:g}, slope {v[4]:+.2f})  off {v[1]:.3f} (k {v[3]:g}, slope {v[5]:+.2f})")
     out.append(f"  short-log flip prior p_change_short = {w.p_change_short}")
     out.append("  size-state correction coef = " + ", ".join(f"{c:+.3f}" for c in m.coef))
+    if getattr(m, "kappa_fit", None) is not None:
+        out.append(f"  cook short-log sub-cell kappa per type = {m.kappa_fit}  (train evidence vs off: {getattr(m, 'kappa_evidence', '')})")
     tw = getattr(m.base.sizes, "tie_weight", None)
     if tw is not None:
         out.append(f"  GateSizes tie weight = {tw}")
@@ -57,7 +61,7 @@ def main():
     maxp = float(meta.get("max_points", 40)); has_t = os.path.exists(os.path.join(pub, "validation", "targets.csv"))
     tune, audit = folds(pub) if has_t else (None, None)
     res = {}
-    for name in ([a.only] if a.only else ["r2", "main"]):
+    for name in ([a.only] if a.only else ["r2", "main", "cook"]):
         method, kw = CANDIDATES[name]; kw = dict(kw)
         if a.workers:
             kw["workers"] = a.workers
@@ -73,12 +77,13 @@ def main():
             res[name] = (0.0, 0.0, m, method, kw)
         print(line, flush=True)
     names = list(res)
-    best = max(names, key=lambda n: res[n][0])
-    if len(names) == 2:
-        other = [n for n in names if n != best][0]
-        if res[best][1] < res[other][1] - 0.3:
-            print(f"tuning prefers {best} but its audit is >0.3 below {other}; choosing {other}")
-            best = other
+    order = sorted(names, key=lambda n: -res[n][0])
+    best = order[0]
+    for n in order:  # best tuning whose audit is within 0.3 of the best audit among the others
+        others = [res[o][1] for o in names if o != n]
+        if not others or res[n][1] >= max(others) - 0.3:
+            best = n; break
+        print(f"tuning prefers {n} but its audit is >0.3 below another candidate's; skipping it")
     tp, ap_, m, method, kw = res[best]
     print(f"CHOSEN: {best} ({method})\n{describe(m)}")
     csv_path = os.path.join(a.out, "submission.csv")

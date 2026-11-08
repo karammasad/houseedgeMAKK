@@ -350,3 +350,54 @@ model, scores both on the new validation set, picks by tuning (audit guard 0.3),
 checks the test CSV, builds the verified ZIP. Dress rehearsal on main: chose r2, CSV 4c5afdc5, kit check OK, ZIP
 fresh-unzip rerun byte-identical. The main upload (adi.sizewin, 1ddc8832) still rebuilds identically after the
 small `_make_base` refactor.
+
+## Round 11 ("cook"): two-level hierarchical size-split cells on short logs
+
+**Idea.** adi's size-split gate ("xs") gives each XOR side 3 sub-cells (payout category at the split lag). Each sub-cell's
+win rate was an independent draw from the type's on/off Beta prior, so a sub-cell with few ticks shrinks to the TYPE mean
+even when the machine's other sub-cells on that side disagree. On short logs (~40 usable ticks, ~6 per sub-cell) that
+wastes the machine's own data. `adi/cook/hier.py` makes the prior two-level:
+
+    side rate mu ~ Beta(a, b)  (the learned on/off type prior, unchanged)
+    sub-cell rate p_c ~ Beta(mu * kappa, (1 - mu) * kappa), independent given mu
+
+mu is marginalized exactly on a 40-point logit grid (each sub-cell's marginal given mu is beta-binomial, memoized by
+(n, k)). kappa -> inf is a tied side rate; small kappa is nearly free sub-cells. Structure x flip averaging and the 50/50
+on-side mixture are unchanged. It's a monkeypatch of `adi.gate._split_mixture` (fork-safe), so no shared file changes.
+
+**Diagnosis that drove it** (`adi/cook/diag.py`, sizewin, full validation): short_history jackpot is the worst slice
+(ratio .122 vs <= .05 elsewhere), mostly win-rate error.
+
+**Results** (validation; tuning-half baseline sizewin: stable .0226 / short .0541 / drift .0287 / shared .0168):
+
+| variant | tuning | audit | full | notes |
+| --- | --- | --- | --- | --- |
+| adi.sizewin (round 7, shipped) | 58.221 | 58.211 | 58.214 | |
+| hierarchy on ALL logs, kappa 5/20/80/300 | 58.13-58.17 | | | short better (.052), stable/drift worse (.023-.031) |
+| hierarchy on short logs only, kappa 40/80/200 | 58.248-58.252 | 58.168 (k200) | 58.211 | short .0541 -> .0518, others unchanged; audit down: helps balanced/steady, hurts jackpot (.122 -> .131) |
+| **kappa per type by train evidence** (`adi.cook`) | **58.253** | 58.207 | **58.229** | picks balanced 30, jackpot 10, steady off |
+| adi.cook on adi.r2 (round-two model) | 58.277 | 58.208 | | adi.r2 alone: 58.238 tuning |
+| **50/50 adi.cook + adi.stack** (`adi.cookblend`, w fixed in advance as round 10) | **58.294** | **58.228** | **58.261** | new best tuning and full |
+| (method4 v7, needs numpy + scikit-learn) | 58.260 | 58.242 | 58.249 | |
+| (round 10 blend sizewin + stack) | 58.276 | 58.223 | 58.249 | |
+
+kappa by train evidence (summed log marginal likelihood vs off, short train logs + 2 masked copies of each long train log):
+balanced 10: +8.0, 30: +9.6, 100: +3.9; jackpot 10: +8.9, 30: +1.7, 100: -9.3 (why kappa 200 hurt jackpot); steady: every
+kappa worse than off. On LONG train logs every kappa loses by 10-150 nats, which matches validation (long-log hierarchy
+hurt stable/drift). So the train evidence picks the same thing validation shows, with no validation data used.
+
+Episode bootstrap (`adi/cook/boot.py`, full validation): cookblend vs sizewin +0.046, P(better) .915, 4/4 conditions
+better or equal (short .0580 -> .0562 carries it); vs round-10 blend +0.012, P .868; adi.cook vs sizewin +0.015, P .771.
+Below AGENTS rule 6's 0.15 bar, like every main-round change since round 5: the gain sits entirely in short_history,
+consistent with the mechanism, but is small.
+
+Bug found on the way: method4_ml/model.py now imports numpy at module load (v7's logit_stack), which broke `adi.stack`
+(and anything packaging it) on a numpy-free Python. `adi.cookblend` registers an empty numpy stub when numpy is
+missing; the v5 tree path never calls numpy. `adi.stack` by itself still fails without numpy.
+
+Entry: `python -m adi.make_entry --method adi.cookblend --data data/main --out build/main_cookblend` -> fresh-unzip rerun
+byte-identical, kit check OK, CSV SHA-256 8cc8b2a7... (numpy-free Python 3.14). Fit + validation + test: ~10 min wall /
+836 s CPU on this laptop (limit: 30 min on 2 cores). Two independent end-to-end runs gave the same scores and CSV.
+Round two: `adi.r2.run` now also fits `cook` = adi.cook on adi.r2 (stdlib, refits itself; the blend needs re-exported
+trees, so it is main-only). Rehearsal on main data picks cook: 58.277 / 58.208 / full 58.243 (r2 58.238 / 58.212 / 58.224);
+the runbook takes ~15 min longer.
