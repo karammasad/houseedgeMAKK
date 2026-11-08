@@ -6,7 +6,7 @@ split). Rule: select on tuning only; check audit once per final candidate; adopt
 All validation-target reads below are in analysis/ scripts (diagnosis), never in fit/predict.
 
 ## Current strongest model
-v7 = v6 + 50/50 structured offset-logistic correction: tuning 58.260 / audit 58.242 / full 58.249 (keep-check vs v6 KEEP, P .986).
+v7 = v6 + 50/50 structured offset-logistic correction: tuning 58.260 / audit 58.242 / full 58.249 (keep-check vs v6 KEEP, P .986; vs team FINAL +0.104 tuning / +0.256 audit: below the +0.15 tuning bar of rule 6).
 Team comparison (adi round 7, stdlib only, 58.214 full): v7 is +0.035 full; the gap is within what 6 vs ~17 correction terms and
 the tree blend can explain, so treat them as equivalent in strength.
 
@@ -15,7 +15,9 @@ tick sample: +0.033 full (v5's 58.190 was partly sampling luck; mean single samp
 
 ## Previous baseline (immutable reference for the research round)
 v5 (`model.py`, commit a0e40e9): tuning 58.236 / audit 58.143 / full 58.190 (kit checker 58.189711).
-Keep-check vs team FINAL (58.156 / 57.986 / 58.074): bootstrap P(better) .987, 4/4 conditions, 241 s -> KEEP.
+Keep-check vs team FINAL (58.156 / 57.986 / 58.074): bootstrap P(better) .987, 4/4 conditions, 241 s -> keepcheck.py verdict KEEP.
+NOTE: keepcheck.py is a bootstrap criterion; AGENTS rule 6 (+0.15 tuning AND an audit gain) is NOT met by v5 against the current FINAL
+(+0.080 tuning). Same for v6/v7 (+0.089 / +0.104 tuning). Adoption needs a team decision to change the rule.
 
 ## Phase 1: diagnosis (observed evidence)
 | question | measurement | result |
@@ -65,6 +67,8 @@ Each: mechanism -> evidence -> falsifier -> result. Gains are vs the stated base
 
 | 25 | Product-of-marginals bias: win rate and size share depend on the SAME hidden size state, so E[pw * s_i] != E[pw] E[s_i] (objective-aligned decomposition, mine) | regress class residuals on the covariance term (pw dev x s_i dev) per type; in-sample upper bound (`analysis/covariance_test.py`) | FALSIFIED as a score source: slopes ~0 for 1x/2x/5x (R^2 <= .05), -0.4..-0.6 only for the tiny 20x class; optimistic in-sample bound 58.249 -> 58.263 (+0.014). |
 | 26 | Round-2 risk: a stacker tuned on round 1 may not generalize to a new mechanism (J/F: distribution-aware) | `round2.py`: one fit, four variants, choose on the new round's TUNING half with a margin over 'gate only' | BUILT + rehearsed on main data (picks v7; 47 s cached). Guards against a stacker that stops helping; prints learned structures with flags. |
+
+| 27 | Ensembling independently built models decorrelates errors (D) | average full 5-class vectors of v7, adi.sizewin, method2 FINAL; weights chosen on tuning (`analysis/ensemble_test.py`) | FALSIFIED: best (2,1,0) tuning 58.262 / audit 58.247 / full 58.253 vs v7 58.260 / 58.242 / 58.249 (+0.004). Equal weights worse on audit (58.194). The models share one gate, so their errors are too correlated. |
 
 Eliminated classes (also: factorization bias, shared-tau pooling, raw-history sequence models): change-model shape (4, 5, 6, 7), cross-machine information (10, 11), richer population priors (8, 9),
 more learner capacity / data / objective tweaks (3, 12, 13, 15).

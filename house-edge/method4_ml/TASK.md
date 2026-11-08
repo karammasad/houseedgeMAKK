@@ -12,12 +12,15 @@ Gradient learners can't discover parities from raw inputs (Shalev-Shwartz et al.
 
 ## v7 (current, model.py): tuning 58.260, audit 58.242, FULL 58.249
 v7 = v6 (bag of 5 tick samples) + a 50/50 blend with a structured offset-logistic correction of P(win) (`logit_stack.py`: size-state x P,
-size-state x (1-P), P(change) x (2P-1), per machine type; gate logit fixed as the offset; l2=1). Keep-check vs v6: KEEP (P .986, 4/4).
+size-state x (1-P), P(change) x (2P-1), per machine type; gate logit fixed as the offset; l2=1). Keep-check vs v6: KEEP (P .986, 4/4; keepcheck.py criterion). Vs team FINAL (58.156 / 57.986 / 58.074): +0.104 tuning / +0.256 audit /
++0.175 full: still below the +0.15 TUNING bar of AGENTS rule 6 (audit moves the same way), so a team decision is needed to adopt it.
 See RESEARCH_LOG.md (experiments 18-24) for what else was tested; main-round error is near the ceiling.
 
 ## v5 (previous, model.py): tuning 58.236, audit 58.143, FULL VALIDATION 58.190 (kit checker 58.189711 / 60)
 Team best before this (adi size_split + Momin FINAL sizes): 58.080 / 57.832 / 57.960. v5 gain: +0.156 tuning / +0.311 audit
-(passes the 0.15 rule on both halves). v4 was 57.956 / 57.768 / 57.865.
+against the OLDER team best (58.080 / 57.832) it was +0.156 tuning; against the CURRENT team FINAL (58.156 / 57.986 / 58.074) it is
++0.080 tuning / +0.157 audit / +0.116 full, which does NOT meet AGENTS rule 6 (+0.15 tuning AND audit same direction). Do not describe it as
+passing that rule without a team decision to change the rule. v4 was 57.956 / 57.768 / 57.865.
 Pieces:
 1. Win gate: adi's model with `size_split` (round 4: win rate depends on the hidden size state), imported read-only.
 2. NEW, signal-shifted cell priors (`signal_shift.py`): data finding (analysis/onrate_structure.py) - inside (type, size state) the
@@ -32,7 +35,8 @@ Pieces:
    as K=24, 4x cheaper features).
 KEEP-CHECK vs team FINAL (method2_sizes round2.FINAL incl. adi size_split + cell_signal), `python -m method2_sizes.keepcheck`:
   A FINAL: 58.156 / 57.986 / full 58.074; B v5: 58.236 / 58.143 / full 58.190; bootstrap P(B better) .987, 4/4 conditions,
-  none worse, 241 s -> VERDICT KEEP. (adi independently found the same signal slope, +0.30, in round 5.)
+  none worse, 241 s -> keepcheck.py verdict KEEP (that tool's own bootstrap criterion, NOT the +0.15 tuning rule of AGENTS rule 6,
+  which v5 misses: +0.080 tuning vs FINAL). (adi independently found the same signal slope, +0.30, in round 5.)
 Runtime: fresh fit + test with 2 workers 310 s (organizer limit 30 min); deterministic (cached == fresh, b23618aa). Needs scikit-learn (rule 4). Package with `python -m method4_ml.make_entry`.
 Tried this round, not adopted: size stacker for P(1x|win) (hurts: 58.236 -> 58.196 at weight .6), HGB grid of 72 configs (flat,
 58.17-58.24), K 6/12/24 (flat), pooled histories for sizes (flat), ramp/gradual drift (true rates are discrete even in drift:
