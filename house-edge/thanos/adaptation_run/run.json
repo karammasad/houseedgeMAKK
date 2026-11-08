@@ -1,0 +1,15 @@
+{
+ "splits": "all",
+ "threads": 2,
+ "timing": {
+  "fit_hyper": 335.5,
+  "fit_flip": 62.1,
+  "predict_test": 32.0,
+  "predict_validation": 16.3
+ },
+ "sha256_test": "e0228d7b273ba362caac4c4a96eee9947b1346ff462ea0969853685f590412d8",
+ "sha256_validation": "653c06a8672a7d79ab42bab5919483bb8ee2c19f5f42fb26452eae96fd79e350",
+ "wall_s": 445.9,
+ "cpu_s": 444.6,
+ "peak_rss_mb": 124.6
+}
