@@ -376,3 +376,19 @@ Tuning half only (no audit use), official kit scorer, /60:
 | v9 patched tree, shared_base off | 58.3107 | .02035 | .05276 | .02723 | .01555 |
 | v9 + shared-base | 58.3376 | .01854 | .05198 | .02827 | .01519 |
 Identity: predictions of both runs equal the earlier v8 and v8+shared-base predictions exactly (max abs diff 0.0 over 768 keys), i.e. v9 at default settings reduces to v8 numerically and the shared-base gain (+0.0269 tuning) is reproduced. v9 learned types [steady, balanced, jackpot], short_obs 64, menu self-check keeps all three. Window protection (<=0.45 ceiling) still not implemented.
+
+## Entry 19: sequence-level (exact forward-backward) decoding for the (1,3) configuration -- NO-GO
+Production candidate frozen first: `production.json` (v9 + shared-base, tuning 58.3376 / full 58.3547), git tags `prod-v9-sb` (b60d222) and `champion-v8` (e8ba0d0). Nothing in the production path was edited; code is in `experiments/seqdecode/`.
+**1. Sufficiency.** Gate at t = w[t-1] XOR w[t-3], size split at lag 1. Transition and emission read only (c_{t-1}, w_{t-2}, w_{t-3}) = 3x2x2 = 12 states; next state (c_t, w_{t-1}, w_{t-2}); with polarity 24 states, exact forward recursion, missing tick = sum over 3 categories. Sufficient ONLY with machine rates (6 cell rates, P(big|win)) held fixed; with unknown rates the latent counts are exchangeable (not Markov), so no finite-state decoder exists. Production drops every tick with a missing input (gate_value returns None) and integrates rates with Beta/logit-normal priors.
+**2. Validation.** `test_brute.py`: 300 random tiny sequences (u 6-9, up to 5 missing, all flip times, all completions): max predictive difference 2.6e-15, joint 2.9e-15 vs brute force. Fully observed: local = exact to 2e-16.
+**3. Known parameters, synthetic (ground truth, 9,000 machines, params from the fitted shared-base population):** MSE vs the TRUE 3-category distribution identical for local and exact at every mask (n40/short64/n80/full all 78.80e-4, paired difference 0.000 [0.000, 0.000]); |p_local - p_exact| mean 2e-8 at short64, max 6e-5. Reason: an isolated scattered tick has an unknown gate bit, so its win probability is the same under both polarities and it carries no flip information.
+**4. Known (plug-in) parameters, real held-out train machines** (576 long machines, 72 episodes, 9,504 rows; plug-in = profile ML on the machine's full pre-u history, an oracle given identically to both). Five-category squared error x1e-4, production sizes, exact - local paired, episode-clustered 95% CI:
+| mask | production V0 | local | exact | exact - local |
+|---|---|---|---|---|
+| n40 | 3454.1 | 4609.9 | 4610.0 | +0.10 [-0.35, +0.54] |
+| short64 | 3468.5 | 4607.0 | 4606.3 | -0.72 [-3.28, +1.36] |
+| n80 | 3457.7 | 4611.9 | 4611.9 | -0.04 [-0.12, +0.04] |
+| full | 3444.8 | 4608.3 | 4608.3 | 0 |
+By type, by gate-explained vs weak, by flipped vs not: every CI includes 0; gate-explained machines differ by <1e-6. Runtime: exact 0.65 ms vs local 0.25 ms per prediction (negligible).
+**5. Ceiling.** The whole missing-history gap of production V0 (mask minus full, five-cat x1e-4): n40 +9.3 [-23.8, +41.9], short64 +23.7 [-4.8, +52.0], n80 +12.9. The exact decoder recovers -0.72 (about 3%, CI includes 0, upper bound 3.3e-4 = 0.1% of the error 3,450e-4). Most of the gap is parameter/structure scarcity (earlier decomposition: scarcity +12.5, structure ambiguity +10.0), which state decoding cannot touch.
+**Verdict: NO-GO.** Estimated-parameter repeat not run (first result not promising, per the stop rule). Caveat: plug-in model covers only the (1,3) xs structure, so absolute plug-in errors are worse than production on weak-gate machines; the paired exact-vs-local comparison is unaffected.

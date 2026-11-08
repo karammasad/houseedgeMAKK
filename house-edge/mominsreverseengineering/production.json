@@ -1,0 +1,9 @@
+{
+  "name": "v9 + shared-base (production candidate, FROZEN)",
+  "method": "method4_ml",
+  "kwargs": {"shared_base": true},
+  "base_commit": "b60d222",
+  "scores_out_of_60": {"tuning": 58.3376, "audit": 58.378, "full_validation": 58.3547},
+  "champion_preserved": "final.json = v8 baseline (58.298 full); v9 with shared_base=false reproduces it exactly",
+  "rule": "do not edit the shared_base / v9 production path; experiments live in experiments/ and import, never patch, it"
+}
