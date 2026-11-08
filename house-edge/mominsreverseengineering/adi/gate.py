@@ -216,6 +216,24 @@ def _shared_tables(rows, cp, a=.5, b=.5):
     return out
 
 
+
+def _shared_dir_ll(rows, cp):
+    """For an "xsg" structure: per flip-time row, (log L_win(d=0), log L_win(d=1)) with the on/off roles and base rates integrated out (same
+    integrals as _shared_tables, whose joint value is log((L0 + L1) / 2)). Used by the win-informed size direction; _shared_tables is unchanged."""
+    import numpy as np
+    lw_on, lw_off, LP, LQ, R = _shared_consts(cp[5:10])
+    n = np.array([r[0] for r in rows], float); k = np.array([r[1] for r in rows], float)
+    per_d = []
+    for d in (0, 1):
+        L = []
+        for side in (0, 1):
+            ks, ns = k[:, 3 * side:3 * side + 3], n[:, 3 * side:3 * side + 3]
+            L.append(ks @ LP[d] + (ns - ks) @ LQ[d])
+        a = [_lse(L[0] + w0, 1) + _lse(L[1] + w1, 1) for w0, w1 in ((lw_on, lw_off), (lw_off, lw_on))]
+        per_d.append(np.logaddexp(a[0], a[1]) - np.log(2.0))               # average over the unknown on/off assignment
+    return [(float(per_d[0][t]), float(per_d[1][t])) for t in range(len(rows))]
+
+
 def _tie_rows(rows6, single):
     """Merge 6 split cells (side x category) into 4 (side x state): state 1 = category `single`, 0 = the others."""
     def idx(c):

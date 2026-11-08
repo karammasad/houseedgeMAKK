@@ -165,3 +165,28 @@ def attach_shared_base(gm, queries, seq, frac=0.45, min_mass=0.03, workers=3):
     gm.shared_fit = dict(pairs=[(list(pr), k) for pr, k in pairs], per_type=per_type,
                          structure_prior={n: round(p, 4) for n, p in zip(names, gm.sprior)})
     return gm.shared_fit
+
+
+def win_direction_evidence(gm, r, seq_m, dl=0.5):
+    """Win-informed size direction. Returns {k: [(weight, llr), ...]} for every size lag k of an "xsg" structure:
+      llr    = log L_win(d=1) - log L_win(d=0) for one (structure, flip time), rates / roles / polarity integrated out (adi.gate._shared_dir_ll)
+      weight = P(structure, flip time | wins, k_s = k) under the direction prior dl, normalised WITHIN the xsg structures that share size lag k.
+    The size model keeps its own prior over k and only replaces its direction prior by sum_w w * sigmoid(logit(dl) + lam * llr): this adds the
+    conditional information about d given k and never re-weights k, so nothing is counted twice. Uses only seq_m (ticks before the cutoff)."""
+    cut = len(seq_m); cfg = gm._mcfg(seq_m, r_type=r["machine_type"]); taus, lprior = G._taus(cut, cfg["p_change"], cfg["step"], cfg["tau_min"])
+    cp = gm._cp(r)
+    if cp is None or len(cp) < 10:
+        return {}
+    sp = gm._sp(seq_m); ent = []
+    for si, st in enumerate(gm.ST):
+        if st[0] != "xsg" or sp[si] <= 0:
+            continue
+        rows = G.machine_counts(seq_m, cut, taus, [st], cfg.get("half_life"))[0][1]
+        for ti, (l0, l1) in enumerate(G._shared_dir_ll(rows, cp)):
+            m = max(l0, l1); marg = m + math.log(dl * math.exp(l1 - m) + (1 - dl) * math.exp(l0 - m))
+            ent.append((st[1][2], math.log(sp[si]) + lprior[ti] + marg, l1 - l0))
+    out = {}
+    for k in {e[0] for e in ent}:
+        es = [e for e in ent if e[0] == k]; mx = max(e[1] for e in es); ws = [math.exp(e[1] - mx) for e in es]; z = sum(ws)
+        out[k] = [(w / z, e[2]) for w, e in zip(ws, es)]
+    return out

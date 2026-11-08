@@ -3,6 +3,27 @@
 Ledger of hypotheses, tests and verdicts. Newest at the top. Each entry: hypothesis, test, numbers, verdict, why.
 Reverts stay here as negative results. See CONTROL.md for the keep rule.
 
+## Entry 15: win-informed size direction (the one approved experiment): STOP by the pre-stated rule; effect real in direction, too small to adopt
+
+**Idea.** Win outcomes carry information about the size direction d (win rate differs by size state, shift gamma = .46 / .53 / .30), but the size model updates d from sizes only; win history reaches it only through the lag prior P(k).
+**Derivation (no double counting).** For a size lag k: P(d | w, y, k) is proportional to P(d) * [sum over structures and flip times of P(s)P(tau) L_win(w | s, tau, d)] * L_size(y | k, d). The size model already uses win data once, through P(k); the hook only replaces its constant direction prior
+(for the {big} partition, only where an xsg structure with that size lag exists) by sum_w w * sigmoid(logit(dl) + lam * LLR), with weights normalised WITHIN the structures sharing lag k, so k is never re-weighted and the prior is added once. Rates, on/off roles and polarity are integrated out as in the gate.
+Each tick's win/loss enters once (L_win) and each win's size once (L_size); past payouts are conditioning only. Code: `adi/gate._shared_dir_ll`, `method4_ml/shared_base.win_direction_evidence`, optional hook in `method2_sizes/sizes.py` (`win_dir_lam`, off by default).
+**Verification** (`experiments/verify_wd.py`): lam = 0 vs the ORIGINAL committed size model max |diff| 0.0 over 2,304 queries; per-direction win likelihood vs brute force 1.4e-14; product form vs the exact joint posterior over d 7.0e-14 over 540 cases (including direction priors .3 / .7). Hook is live when on (lam .5 moves predictions by up to .10).
+**Training-only held-out diagnostic** (`wd_diag.py`; 576 long train machines, 72 episodes, 25,392 pseudo-query rows, targets at 45-58% of the log, prefixes n40 / real short layout / full, lambda in {-.5, 0, .25, .5, 1} chosen on one episode half and scored on the other; 330 s on 8 cores).
+Rule fixed in advance: proceed only if on n40 and short64 the cross-fitted size log-loss improves with an episode-clustered 95% CI below 0, the shuffled-history control shows no gain, and the five-category squared error does not worsen.
+
+| info | size log-loss change (cand - base) | 5-class sq err change x1e-4 | SHUFFLED control: size log-loss | control: 5-class x1e-4 |
+| --- | --- | --- | --- | --- |
+| n40 | -0.00182 [-0.00419, +0.00029] | -4.12 [-9.19, +0.39] | +0.00083 [+0.00015, +0.00160] | +2.56 [+0.98, +4.44] |
+| short layout | -0.00114 [-0.00346, +0.00104] | -2.76 [-7.64, +1.83] | +0.00057 [-0.00017, +0.00135] | +2.15 [+0.58, +3.93] |
+| full | -0.00212 [-0.00380, -0.00044] | -3.50 [-7.07, -0.17] | +0.00040 [-0.00017, +0.00099] | +1.02 [-0.19, +2.35] |
+
+Learned lambda +1.0 in both halves (the Round 1 sign link holds; negative lambda lost). By type at the short layout all intervals include 0 (balanced -.0038, jackpot +.0006, steady +.0002).
+**Verdict: STOP (rule not met).** The direction is right and consistent and the shuffled control gets WORSE (a wrong machine's win history hurts), so the evidence is machine-specific and not an artifact; but the gain is about 0.1-0.2% of size log-loss and the interval on both short settings includes 0.
+Final five-category error does not worsen. No official tuning run was made; no audit was used. The hook stays in the folder as an off-by-default option (lam = 0 reproduces the shipped model exactly). Not worth adopting on this evidence; a larger sample (the Round 2 kit) is the only way to tell +0.1% from 0.
+Runtime of this experiment: verification < 1 min, diagnostic 330 s (the first run also took 306 s before a control-baseline bug of mine, fixed and rerun with the same protocol). Fit-time cost of the hook in the full pipeline was NOT measured because no full run was made.
+
 ## Entry 14: deployment fix (checkpoint packaging): rerun 27 min -> about 30 s, predictions unchanged
 
 Problems found in `method4_ml/make_entry.py` (our copy): (1) the packaged entry refits from scratch in the organizers' rerun (27.2 min on 2 cores, Entry 13); (2) packaging fits TWICE (CSV, then the fresh-unzip check);

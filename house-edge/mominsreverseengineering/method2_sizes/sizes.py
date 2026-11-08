@@ -106,6 +106,7 @@ class GateSizes:
         self.cell_prior, self.grid, self.npmle_iters = cell_prior, grid, npmle_iters
         self.split_conc_cap = split_conc_cap
         self.atoms = None   # {type: (grid a values, log a, log(1-a), weights)} when cell_prior == "npmle"
+        self.win_dir_lam, self.win_dir_fn, self.win_dir_ctx = 0.0, None, None   # win-informed direction (off: lam == 0)
 
     @staticmethod
     def _cat(v):
@@ -141,7 +142,7 @@ class GateSizes:
     # two-group splits are allowed; their prior is learned in fit(). Missing lag -> state unknown (mixture).
     PARTITIONS = ((2,), (1,), (0,))   # group B = {big}, {1x}, {loss}; group A = the other two categories
 
-    def _tied(self, cells, cur, t, k_is_none=False):
+    def _tied(self, cells, cur, t, k_is_none=False, dirp=None):
         """Combined (log marginal likelihood, predicted a) over tied hypotheses for one lag."""
         lo, hi = self.levels[t]; lvl = (lo, hi)
         def ll_cell(c0, c1, a):
@@ -157,7 +158,7 @@ class GateSizes:
                 out.append((math.log(ks if s else 1 - ks) + ll_cell(c0, c1, lvl[s]), lvl[s]))
         else:
             for pi, grp in enumerate(self.PARTITIONS):
-                dl = self.dir_prior.get(t, .5)
+                dl = self.dir_prior.get(t, .5) if (dirp is None or pi != 0) else dirp   # pi 0 = group B {big}: the partition the win evidence covers
                 for d in (0, 1):   # d = state of group B (1 = high-1x level); prior P(d=1) = dir_prior
                     ll = math.log(self.part_prior[pi]) + math.log(dl if d else 1 - dl)
                     for ci in range(3):
@@ -169,17 +170,23 @@ class GateSizes:
         m = max(x for x, _ in out); w = [math.exp(x - m) for x, _ in out]; z = sum(w)
         return m + math.log(z), sum(wi * a for wi, (_, a) in zip(w, out)) / z
 
-    def _tables(self, seq_m, mu, t=None):
+    def _tables(self, seq_m, mu, t=None, q=None):
         """Per hypothesis (no gate, lag 1..max_lag): (log marginal likelihood, predicted a at the cutoff).
         With tying on, each lag mixes its free-cell model with its tied two-state model (weight tie_weight)."""
         res = []
         tie = self.tied and self.levels is not None and t in self.levels and isinstance(self.tie_weight, float)
+        lam = getattr(self, "win_dir_lam", 0.0); ev = None
+        if tie and lam != 0.0 and q is not None and getattr(self, "win_dir_fn", None) is not None:
+            dl0 = min(max(self.dir_prior.get(t, .5), 1e-3), 1 - 1e-3); ev = self.win_dir_fn(self.win_dir_ctx, q, seq_m, dl0)
         for k, (cells, cur) in enumerate(self._cells(seq_m)):
             parts = [self._cell(c0, c1, t, mu) for c0, c1 in cells]
             free = (sum(p[0] for p in parts), parts[cur][1])
             if not tie:
                 res.append(free); continue
-            tl = self._tied(cells, cur, t, k_is_none=(k == 0))
+            dirp = None
+            if ev and k in ev:   # replace the direction prior by its win-updated version (lam scales the update; lam = 0 never reaches here)
+                lg = math.log(dl0 / (1 - dl0)); dirp = sum(w * (1 / (1 + math.exp(-(lg + lam * llr)))) for w, llr in ev[k]); dirp = min(max(dirp, 1e-3), 1 - 1e-3)
+            tl = self._tied(cells, cur, t, k_is_none=(k == 0), dirp=dirp)
             w = self.tie_weight
             l1 = math.log(1 - w) + free[0]; l2 = math.log(w) + tl[0]; m = max(l1, l2)
             e1, e2 = math.exp(l1 - m), math.exp(l2 - m)
@@ -501,7 +508,7 @@ class GateSizes:
 
     def predict_with_prior(self, q, seq_m, prior, tabs=None):
         """Same as predict() but with an explicit prior over size-lag hypotheses (joint win x size inference)."""
-        t = q["machine_type"]; tabs = self._tables(seq_m, self.mu[t], t) if tabs is None else tabs
+        t = q["machine_type"]; tabs = self._tables(seq_m, self.mu[t], t, q) if tabs is None else tabs
         lw = [math.log(p) + ll for p, (ll, _) in zip(prior, tabs)]; m = max(lw)
         w = [math.exp(x - m) for x in lw]; s = sum(w)
         a = sum(wi * pa for wi, (_, pa) in zip(w, tabs)) / s
