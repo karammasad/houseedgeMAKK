@@ -1,0 +1,9 @@
+cache/
+*.pkl
+__pycache__/
+*.pyc
+data/
+/data
+experiments/synth_*/
+experiments/gm_sb.pkl
+build/

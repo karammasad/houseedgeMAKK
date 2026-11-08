@@ -1,0 +1,58 @@
+[
+ {
+  "fold": 0,
+  "model": "HA",
+  "converged": false,
+  "iterations": 120,
+  "loglik": -14314.8
+ },
+ {
+  "fold": 0,
+  "model": "HD",
+  "converged": true,
+  "iterations": 77,
+  "loglik": -14300.3
+ },
+ {
+  "fold": 1,
+  "model": "HA",
+  "converged": true,
+  "iterations": 99,
+  "loglik": -14450.8
+ },
+ {
+  "fold": 1,
+  "model": "HD",
+  "converged": true,
+  "iterations": 73,
+  "loglik": -14431.5
+ },
+ {
+  "fold": 2,
+  "model": "HA",
+  "converged": true,
+  "iterations": 98,
+  "loglik": -14672.3
+ },
+ {
+  "fold": 2,
+  "model": "HD",
+  "converged": false,
+  "iterations": 120,
+  "loglik": -14655.6
+ },
+ {
+  "fold": 3,
+  "model": "HA",
+  "converged": false,
+  "iterations": 120,
+  "loglik": -14361.4
+ },
+ {
+  "fold": 3,
+  "model": "HD",
+  "converged": true,
+  "iterations": 72,
+  "loglik": -14339.7
+ }
+]
