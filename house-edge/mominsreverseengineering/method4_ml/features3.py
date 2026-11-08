@@ -12,23 +12,39 @@ Groups
   size_*  (optional) the size model's P(1x | win) for this machine at t and its deviation from the type mean: the
           hidden size state also moves the win rate (adi round 4), so the GBM can learn that shift.
   base    lag wins 1..8, recent win rates (10/20/40), observed count, missing share of last 40, type, signal.
+  pol     (v9, optional: gm.polarity) polarity bank (polarity.py): strongest neighbour-lag, own big-payout-lag and
+          own-XOR-neighbour evidence on this machine's own history, and the shift it predicts now. Appended LAST so the
+          logit_stack column layout of the first 29 columns is unchanged.
+Data-derived settings live on gm (set by model.fit, learned from the round's data): gm.type_order (machine types; the main
+round's three keep their main indices, new types are appended), gm.short_obs (observed-tick count of a short log).
 """
 import math
+import numpy as np
 from adi import gate as G
 from common.data import wins
 
-TYPES = ("steady", "balanced", "jackpot")
-SHORT_OBS = 64
+TYPES = ("steady", "balanced", "jackpot")     # default order only; the model sets gm.type_order from the data
+SHORT_OBS = 64                                 # default only; the model sets gm.short_obs from the train short logs
 
 
-def is_short(seq_trunc):
-    return sum(1 for x in seq_trunc if x >= 0) <= SHORT_OBS
+def type_order(names):
+    """Main-round types keep their main indices (results on main stay identical); any other type is appended in sorted order."""
+    return list(TYPES) + sorted(set(names) - set(TYPES))
+
+
+def type_index(gm, name):
+    order = getattr(gm, "type_order", None) or list(TYPES)
+    return order.index(name) if name in order else len(order)
+
+
+def is_short(seq_trunc, short_obs=SHORT_OBS):
+    return sum(1 for x in seq_trunc if x >= 0) <= short_obs
 
 
 def gate_summary(seq_trunc, r, gm):
     """Gate posterior summaries for predicting tick len(seq_trunc)."""
     cut = len(seq_trunc); cfg = dict(gm.cfg)
-    if gm.p_change_short is not None and is_short(seq_trunc):
+    if gm.p_change_short is not None and is_short(seq_trunc, getattr(gm, "short_obs", SHORT_OBS)):
         cfg["p_change"] = gm.p_change_short
     taus = list(range(cfg["tau_min"], cut - 2, cfg["step"])); nt = len(taus)
     lp = [math.log(cfg["p_change"] / nt)] * nt + [math.log(1 - cfg["p_change"])] if nt else [0.0]
@@ -64,10 +80,15 @@ def base_features(seq_trunc):
 
 def episode_examples(machines, seq, ticks, gm, sz=None):
     """machines: query dicts of one episode; ticks: prediction ticks. Returns {(machine_id, t): features}."""
-    out = {}
+    out = {}; pol = getattr(gm, "polarity", False)
     for t in ticks:
+        PF = None
+        if pol:
+            from method4_ml.polarity import episode_polarity
+            P = np.array([seq[r["machine_id"]][:t] for r in machines], dtype=np.int16)
+            PF = episode_polarity(np.where(P < 0, -1, (P > 0)).astype(np.int8), P, t)
         M = {r["machine_id"]: gate_summary(seq[r["machine_id"]][:t], r, gm) for r in machines}
-        for r in machines:
+        for k, r in enumerate(machines):
             mid = r["machine_id"]; others = [M[o["machine_id"]] for o in machines if o["machine_id"] != mid]
             n = max(len(others), 1)
             ep = [sum(o[2] for o in others) / n, max((o[2] for o in others), default=0),
@@ -76,5 +97,5 @@ def episode_examples(machines, seq, ticks, gm, sz=None):
             szf = []
             if sz is not None:   # size model's P(1x | win) at this tick (hidden size state) and its type-centred version
                 a = sz.predict(r, seq[mid][:t])[0]; szf = [a, a - sz.mu.get(r["machine_type"], a)]
-            out[(mid, t)] = g + [lg] + ep + base_features(seq[mid][:t]) + [TYPES.index(r["machine_type"]), r["signal"]] + szf
+            out[(mid, t)] = g + [lg] + ep + base_features(seq[mid][:t]) + [type_index(gm, r["machine_type"]), r["signal"]] + szf + ([] if PF is None else PF[k].tolist())
     return out

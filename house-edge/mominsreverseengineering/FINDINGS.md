@@ -366,3 +366,13 @@ in the fingerprint's cell-prior `k` values).
 - Hypothesis: none. This is the reference every later keep check compares against.
 - Test: `python3 run.py score --name "v8 baseline"` on `../data/main`.
 - Expected (from Kareem's log, e46c44d): tuning 58.309, audit 58.287, full 58.297. Verdict: reference.
+
+## Entry 18: shared-base re-applied on Kareem's v9 (origin/main 0f201ad)
+Copied v9 `method4_ml` (features3, model, size_menu, logit_stack, round2, polarity, test_no_leakage) into this folder; re-applied only the shared-base wiring
+(`shared_base` option, `attach_shared_base` call in `_fit_gate`, `self.fver` cache-key suffix; off = pristine v9). Shared packages (adi/gate.py, adi/model.py, method2_sizes) unchanged on main, so our xsg additions apply as is. No teammate file touched.
+Tuning half only (no audit use), official kit scorer, /60:
+| run | tuning | stable | short | drift | shared |
+|---|---|---|---|---|---|
+| v9 patched tree, shared_base off | 58.3107 | .02035 | .05276 | .02723 | .01555 |
+| v9 + shared-base | 58.3376 | .01854 | .05198 | .02827 | .01519 |
+Identity: predictions of both runs equal the earlier v8 and v8+shared-base predictions exactly (max abs diff 0.0 over 768 keys), i.e. v9 at default settings reduces to v8 numerically and the shared-base gain (+0.0269 tuning) is reproduced. v9 learned types [steady, balanced, jackpot], short_obs 64, menu self-check keeps all three. Window protection (<=0.45 ceiling) still not implemented.
