@@ -1,4 +1,4 @@
-# mini_thanos: routed thanos (recommended conservative Round 1 entry)
+# mini_thanos: routed thanos (conservative alternative; the final pick is full thanos, see ../thanos/LOG.md section 11)
 
 Long logs -> `thanos` (exact generator posterior, `../thanos/`); short logs -> the champion (Momin's shared-base) from its saved checkpoint.
 The route uses only the observable log shape (fewer than half the pre-cutoff ticks observed = short); no condition labels.

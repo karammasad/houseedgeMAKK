@@ -115,3 +115,13 @@ j4-15 -0.0022 (P .99). Paired E2 - E1 on identical rows: all j -0.00168 (P .999)
 ## 10. Leakage tests on the final tick set ("own"): ALL 8 PASS (5, 6, 2, 7, 1, 4, 1b, 3), same tests as section 1.
 Repo layout from here: `thanos/` (full model, this folder) and `mini_thanos/` (routed entry: thanos on long logs, champion checkpoint on short logs;
 end to end 564 s, validation 58.4666 reproduced, test CSV sha256 a9c716a6..., passes the kit checker).
+
+## 11. Final decision (2026-11-08): SUBMIT FULL THANOS (E2, tick set "own"), not mini_thanos
+Section 9 recommended mini_thanos on procedural grounds (E2's short-log choice was post hoc and failed its pre-registered train CV). Re-weighing the
+evidence by precision: on validation SHORT logs, scored against the TRUE probabilities, thanos beats the champion in 18 / 24 episodes, paired
+episode bootstrap -0.00202 [-0.00439, +0.00043], P .95, still -0.00063 without its best 3 episodes. The post-hoc choice was ONE binary option with
+nothing tuned, which cannot manufacture an 18 / 24 episode win. The contrary evidence (train CV, P .12; route-test c..c-3 slice) scores against
+single sampled outcomes, with CIs 2-3x wider than the effect, and the route test over all 16 cutoffs leans thanos (vs champion P .88). Long logs
+are identical in both entries. Expected test gain of thanos: between mini_thanos's +0.11 and its own +0.27; residual risk confined to short logs.
+Practical: one model, numpy + scipy only, no checkpoint. Package: mominsreverseengineering/deploy_thanos/entry.zip (Momin; verified offline,
+7.3 min, byte-identical rerun). The pre-registered rule is recorded as NOT met; this is a judgement call, stated as such.

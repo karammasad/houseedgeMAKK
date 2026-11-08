@@ -29,8 +29,10 @@ Better in all four conditions (stable -8%, short -21%, drift -12%, shared -20% e
 fixed short logs) was made AFTER the first validation look, so validation alone does not prove it; the train-only checks in LOG.md decide.
 Runtime: 689 s wall / 600 CPU-s for fit + test + validation (transductive, 2 threads, machine shared with 3 other jobs); peak RSS 255 MB.
 
-## Status (see LOG.md sections 7-9)
+## Status (see LOG.md sections 7-11)
+**FINAL DECISION (LOG.md section 11): submit full thanos**, package `mominsreverseengineering/deploy_thanos/entry.zip`.
+
 - Long logs: thanos beats the champion on validation AND on independent train outcomes (P .997). Established.
 - Short logs: the tick-set fix wins on validation but train-only CV fails its pre-registered rule (P .12) and train evidence is inconclusive.
-- Recommended conservative entry: ROUTED (thanos on long logs, champion checkpoint on short logs): 58.467 validation (+0.11).
+- Conservative alternative (no longer the pick): ROUTED (thanos on long logs, champion checkpoint on short logs): 58.467 validation (+0.11).
   Full thanos (58.629) is the higher-upside, less-verified option.
