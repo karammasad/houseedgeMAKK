@@ -454,3 +454,37 @@ identity. After the fix: scores unchanged (58.318 / 58.279 / 58.297), fresh-unzi
 in-process vs fresh test predictions identical (max diff 0.0). Runtime of the r2 cook entry: 1176 CPU-s, 527 s wall on
 this laptop (Python 3.12). Menu from train histories only: 58.295 / 58.259 / 58.275 (worse) and not faster, so all
 histories are kept.
+
+## Round 14: fixing the v8 line's deployment problems (Momin's Entry 13) + pooling v8 with cook
+
+**Issues found in the v8 / v8 + shared-base entry** (mominsreverseengineering FINDINGS 12-13, re-checked here):
+1. Runtime: the organizers' 2-core / 30-minute rerun refits everything; v8 + shared-base took 27.2 min (margin 9%), 67% of it
+   feature building. On slower hardware it times out, and a failed code check is not reverted.
+2. Version mismatch: the CSV was produced with scikit-learn 1.8.0 / numpy 2.4.4 while requirements.txt pins 1.9.1 / 2.1.3, so the
+   runner's recreated CSV may differ ("mismatch").
+3. workers = detected cores (capped at 8) oversubscribes a 2-core container.
+4. shared-base gain inconclusive (+0.027 tuning; 79% from 5 episodes; audit consumed). Not adopted here.
+
+**Fixes** (all in adi/, nothing in the other folders edited):
+- `build/venv312`: Python 3.12 venv with the EXACT pins (scikit-learn 1.9.1, numpy 2.1.3, scipy 1.18.1, joblib 1.6.0,
+  threadpoolctl 3.8.0). method4 v8/v9 reproduces 58.309 / 58.287 / 58.297 under it.
+- `adi/ckpt_entry.py`: saved-checkpoint entries (the guide's recommended path). Fit once, pickle the fitted model into the ZIP,
+  predict.py only loads + predicts with 2 workers / 2 BLAS threads; requirements.txt = the exact installed versions (none for
+  stdlib models); fresh-unzip rerun must be byte-identical. Pool entry: checkpoint 7.6 MB, ZIP 3.2 MB, read-only rerun
+  **132 s wall / 137 CPU-s** (was a ~27 min refit).
+- `adi/pool`: 0.5 method4 + 0.5 adi.cook (weight fixed in advance; method4 always runs with cook's patches off).
+
+| main validation | tuning | audit | full |
+| --- | --- | --- | --- |
+| method4 v8/v9 | 58.309 | 58.287 | 58.297 |
+| adi.cook (r2 + menu + adi coupling) | 58.318 | 58.279 | 58.297 |
+| **pool 0.5 / 0.5** | **58.337** | **58.321** | **58.327** |
+
+Weight is flat (w 0.4 / 0.5 / 0.6 -> full 58.326 / 58.327 / 58.326), both halves improve; bootstrap vs v8 +0.031, P .897
+(short, drift, shared better; stable .0170 -> .0175). Checkpoint model's validation predictions equal the cached pool (diff 0.0).
+- `adi/r2/fast.py` now fits 5 candidates in parallel (r2, cook, cook_nomenu, cook_nocouple, m4), scores the pool from saved
+  predictions, and ships the winner as a checkpoint built from the already-fitted models. Main rehearsal: chooses pool,
+  **18.4 min to a verified upload**, checkpoint CSV identical to the in-process prediction and to the stand-alone build (3b5a46c2).
+Leakage check (`adi/cook/leak_pool.py`): full pool fit + predict on a copy of the kit with every answer file deleted (validation
+labels / targets / conditions / reference, train conditions), every opened file logged incl. forked workers: only queries.csv and
+history.csv of train / validation / test were opened; validation and test predictions identical to the clean run (max diff 0.0).

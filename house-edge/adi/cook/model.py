@@ -124,6 +124,8 @@ class Model:
     def _install(self):
         hier.tag_adi(); hier.install(self.kappa_fit, self.kappa_long)
         COUPLE.install(self.size_couple == "adi")
+        if self.size_couple == "adi" and getattr(self, "inner", None) is not None:
+            COUPLE.STATE["adi"] = self.inner.base.win   # after loading a checkpoint the fit-time hook never ran
 
     def fit(self, pub):
         self.kappa_fit = self._learn_kappa(pub) if self.kappa == "learn" else self.kappa

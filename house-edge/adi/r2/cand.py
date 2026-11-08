@@ -15,6 +15,12 @@ if __name__ == "__main__":
            "test": m.predict(pub, "test"), "seconds": time.time() - t0}
     with open(os.path.join(a.out, "pred.json"), "w") as f:
         json.dump(res, f)
+    import pickle
+    try:   # the fitted model, so the runbook can ship it as a checkpoint (or pool it) without refitting
+        with open(os.path.join(a.out, "model.pkl"), "wb") as f:
+            pickle.dump(m, f, protocol=4)
+    except Exception as e:
+        print(f"could not pickle the fitted model: {e!r}")
     try:
         from adi.r2.run import describe
         txt = describe(m)

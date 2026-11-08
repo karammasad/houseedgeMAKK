@@ -8,13 +8,21 @@ Target: a verified upload by ~11:00, then improve only if time allows. Commands 
 3. Copy that kit's `public/` folder to `house-edge/data/adaptation/` (so `data/adaptation/train/queries.csv` exists).
    Don't touch `data/main/`.
 
+## Before 10:30 - check the pinned environment exists (it is in build/, not in git)
+```bash
+build/venv312/bin/python -c "import sklearn, numpy; print(sklearn.__version__, numpy.__version__)"   # expect 1.9.1 2.1.3
+```
+If it's missing: `/opt/homebrew/bin/python3.12 -m venv build/venv312 && build/venv312/bin/pip install -r method4_ml/requirements.txt`
+
 ## 10:35 - one command (about 25 min on this laptop)
 ```bash
-python3 -m adi.r2.fast --data data/adaptation --out build/r2fast
+build/venv312/bin/python -m adi.r2.fast --data data/adaptation --out build/r2fast
 ```
-It fits 4 candidates in parallel (`r2`, `cook`, `cook_nomenu`, `cook_nocouple`), scores each on the new validation
-set, picks the best tuning score (audit guard), writes the test CSV, runs the kit checker, builds the ZIP and reruns it
-from a fresh unzip (must be byte-identical). Main-data rehearsal: 14 min to the choice, 23 min to a verified ZIP.
+It fits 5 candidates in parallel (`r2`, `cook`, `cook_nomenu`, `cook_nocouple`, `m4` = Kareem's v8/v9) and scores a sixth,
+`pool` = 0.5 m4 + 0.5 cook (main validation 58.337 / 58.321 / 58.327, the best so far), from their saved predictions. It picks
+the best tuning score (audit guard), then ships the winner as a SAVED CHECKPOINT: the fitted model goes into the ZIP and the
+organizers' rerun only loads + predicts (2.2 min instead of ~27 min for a refit). The CSV is predicted from the checkpoint,
+checked, zipped and rerun from a fresh unzip (must be byte-identical), and compared with the in-process prediction.
 
 What good output looks like:
 - `exit 0` for every candidate, then a `[name] tuning ... audit ... full ...` line for each.
@@ -32,6 +40,7 @@ python3 kit/check_submission.py build/r2fast/entry/submission.csv --data data/ad
 - One candidate fails: the others still run; it picks among the ones that finished.
 - The build step fails: upload nothing yet. Rerun only the safest candidate:
   `python3 -m adi.r2.fast --data data/adaptation --out build/r2fast_r2 --only r2`
+- No pinned environment / scikit-learn trouble: `python3 -m adi.r2.fast ...` (plain python) skips m4 and pool and still works.
 - Everything fails: the old runbook, sequential (~40 min): `python3 -m adi.r2.run --data data/adaptation --out build/r2_old --only r2`
 - Never upload a CSV whose ZIP wasn't built from the same run (the `entry/` folder pairs them).
 
