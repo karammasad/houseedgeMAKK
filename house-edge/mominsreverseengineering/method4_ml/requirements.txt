@@ -1,0 +1,8 @@
+# Method 4 (method4_ml) external dependencies, pinned to the versions used for every reported result
+# (Python 3.12.5 on macOS arm64/x86_64; the organizer runner uses Python 3.13 - see method4_ml/PACKAGING.md).
+# adi, method1_gate, method2_sizes, common are the team's own packages and use only the standard library.
+scikit-learn==1.9.1
+numpy==2.1.3
+scipy==1.18.1
+joblib==1.6.0
+threadpoolctl==3.8.0

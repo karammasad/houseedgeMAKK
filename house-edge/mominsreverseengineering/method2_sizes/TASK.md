@@ -1,0 +1,63 @@
+# TASK: Method 2, payout sizes given a win (owner: Person B)
+
+Read ../AGENTS.md first.
+
+## What exists
+- `sizes.py`: `DirichletSizes(strength)` (type x signal prior) and `NPMLESizes(min_wins=30, iters=300)`
+  (Kiefer-Wolfowitz NPMLE prior over machine size distributions per machine type, EM weights; Koenker & Gu).
+- `model.py`: Method 1's gate with a size model chosen by the `sizes` setting. Add new size models to sizes.py
+  and a new `sizes=` option in method1_gate/model.py's constructor (tell Person A).
+- Score: NPMLE 55.05 tuning / 54.79 audit; Dirichlet(30) 54.88 / 54.56.
+- Upper bound with TRUE sizes: about +2.5 points. Known: size depends on machine type, NOT signal; machines differ
+  mostly in the 1x vs 2x split; size does not depend on the gate cell; last-40-tick size counts are worse.
+
+## Do, in order
+1. B1 Mechanism test: in train histories, tabulate the size of a win by the previous win's size and by each lag's
+   payout (lags 1..8). Write findings to FINDINGS.md. If a dependence exists, make it a covariate.
+2. B2 Episode-wide size shifts: add each episode's recent size deviation from type averages (other machines,
+   ticks < cutoff only). Window {20,40,80}, shrinkage {0.25,0.5,1}. Keep if shared-change improves.
+3. B3 Size change point: weight size counts by the gate's flip posterior, or apply the change-point model to sizes.
+4. B4 Recency weights inside the NPMLE likelihood: half-life {64,128,256}.
+5. B5 NPMLE atoms from all splits' histories (allowed: histories only) plus Dirichlet draws; min_wins {20,30,60}.
+6. B6 Control: Dirichlet-multinomial with strength fitted per type by Minka's fixed-point iteration.
+
+To measure size changes alone, keep the gate fixed (same Model settings) and change only `sizes`.
+
+## Status (2026-11-07)
+- Done: B1 (lag-1 size covariate, `sizes="lag"`), B4 (`npmle_half_life`), B5 (`npmle_min_wins`: no effect),
+  B6 (`sizes="minka"`: worse). B2 skipped (episode ICC ≈ 0). B3 blocked (needs the gate's flip posterior from Person A).
+- Candidate: `{"sizes":"lag","lag_strength":100,"npmle_half_life":64}` → tuning 55.227 (+0.173), audit 54.851 (+0.056),
+  full validation via kit checker 55.044 (+0.117). Details in FINDINGS.md; outputs in out/.
+- UPDATE: size gate found (see top of FINDINGS.md). New candidate `{"sizes":"gate","gate_cell_prior":"npmle"}` →
+  tuning 56.037 (+0.98), audit 56.377 (+1.58), full validation 56.191 (+1.26). Supersedes the lag candidate.
+- UPDATE 2 (short history): size lag coupled to the win gate + tied two-state hypotheses. Candidate
+  `{"sizes":"gate","gate_cell_prior":"npmle","gate_couple":true,"gate_couple_iters":20,"gate_tied":true}` →
+  tuning 56.999, audit 56.974, full validation 56.985 (+2.06 vs entry). Ship with:
+  python tools/make_entry.py --method method2_sizes --kwargs '<that JSON>' --data data/main --out build/main
+- UPDATE 3: stacked on adi's C5 gate (`win_model="adi"`) + learned tie weight → tuning 57.746, audit 57.490,
+  full validation 57.622. Final settings = FINAL in round2.py. Round-two runbook: `python -m method2_sizes.round2`.
+  Packaging: use `python -m method2_sizes.make_entry` (copy that also packages adi/; verified rerun-identical).
+- UPDATE 4: joint empirical-Bayes EM promoted (`gate_joint_em=True` in FINAL). Keep check vs previous final:
+  tuning 57.901 (+0.155), audit 57.665 (+0.175), full 57.787 (+0.165), 4/4 conditions, bootstrap P=1.00.
+  Upload files rebuilt in out/main_entry/ (SHA 450755db).
+- EXPERIMENT 7 (reverted): learned direction / constant-state priors (`gate_learn_direction`). Full 57.790 vs
+  57.787, bootstrap P=.83 → not adopted. Final stays joint EM (SHA 450755db). Unit tests:
+  `python -m unittest method2_sizes.test_method2`.
+- UPDATE 5 (made by Adi, at Adi's request): adi's size-split win gate (`"size_split": True` in `ADI`, adi round 4:
+  the win rate depends on the hidden size state). Keep check vs previous final: tuning 58.080 (+0.179), audit
+  57.832 (+0.167), full 57.960 (+0.173), 4/4 conditions, bootstrap P=1.000. Unit tests pass. Upload files
+  rebuilt in out/main_entry/ (SHA e2686e96). Details: adi/FINDINGS.md "Round 4".
+- EXPERIMENT 8 (rejected): sparse two-lag size expert (`twolag=...`, twolag.py). Best variant -0.003 tuning;
+  data drives its weight to the floor. Does not change the final (now Update 5, SHA e2686e96). See FINDINGS.md.
+- UPDATE 6 (made by Adi, at Adi's request): adi's signal-slope cell prior (`"cell_signal": True` in `ADI`, adi round 5).
+  Keep check vs previous final: tuning 58.156 (+0.076), audit 57.986 (+0.154), full 58.074 (+0.114), 4/4
+  conditions, bootstrap P=0.999. Upload files rebuilt in out/main_entry/ (SHA 56c5cd55).
+- EXPERIMENTS 9-10 (reverted): joint win x size inference (`joint_feedback`, joint.py) and adaptive feedback gates
+  (adaptive.py). KC1 (= Adi's cell_signal) KEEP 58.074; KC2 short-log feedback REVERT (audit -0.015, P=.65).
+  Final unchanged: 58.074, CSV SHA 56c5cd55 (re-verified with the current code).
+- EXPERIMENT 11 (diagnostic, nothing promoted): generative simulator + PPC + ceiling (genmodel.py, ppc.py,
+  ceiling.py, flip_*_probe.py); learned flip-time prior (flipprior.py, `flip_prior`, default off) -0.215 tuning.
+  Final unchanged (58.074, CSV 56c5cd55). See FINDINGS.md.
+- EXPERIMENTS 12-13 (reverted): exact marginalization over unobserved ticks. Win-only filter (`miss_filter=True`):
+  full 58.117, audit -0.009, P=.917. Joint win x size filter (`miss_filter="joint"`): tuning +0.115, audit -0.036,
+  full 58.118, P=.672. Final unchanged: 58.074, CSV SHA 56c5cd55 (re-verified, 14 unit tests pass).

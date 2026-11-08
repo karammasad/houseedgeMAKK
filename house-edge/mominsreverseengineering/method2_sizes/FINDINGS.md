@@ -1,0 +1,342 @@
+# Method 2 findings: payout sizes given a win
+
+## Experiments 12-13: exact marginalization over unobserved ticks (REVERTED on audit; final stays 58.074)
+
+**What the existing code discards** (read from adi/gate.py): any tick whose gate lags are not all observed is skipped
+for the cell counts, so in short logs the outcomes of the 24 sampled older ticks are thrown away; the size model puts
+wins with a missing size lag into a 50/50 "state unknown" cell. The cutoff cell itself is always observed in short logs.
+**Headroom bound** (`missing_diag.py`, validated simulator with known truth, real short masks): current .01347,
+lag bits revealed .00659, fully observed .00419 (total mse). The bound (+0.55 points) is LOOSE: it reveals the 8 lags
+before every sampled tick, i.e. far more data than marginalization can recover. Share of short queries whose P(win)
+would move by > .02 under that bound: 32%.
+
+**Exp 12, win-only filter** (`missfilter.py`, own implementation; hidden lag bits integrated out per tick, observed lag
+used when one exists, rates integrated on a grid against the type's Beta priors, structure prior learned by EM on
+train pre-flip history; exact vs brute-force enumeration, difference 0). Short-log P(win) squared error: FINAL
+.00535, filter with unknown ticks off .00568, ON .00522, FINAL + (ON - off) .00491. Keep check (option
+`miss_filter=True`, increment weight 1, nothing tuned): tuning 58.245 (+.089), audit 57.977 (-.009), full 58.117
+(+.043), short .0617 -> .0587, bootstrap P = .917, 1/4 conditions -> REVERT.
+
+**Exp 13, joint win x size filter** (`jointfilter.py`): a hidden lag tick is ONE payout category feeding both the win
+gate (c > 0) and the size state (c in the learned group), so it is marginalized once for both outcomes; a sampled
+win's size (1x vs big) then informs the hidden win bit. Exact vs independent brute force (5.7e-14, unit test). Short
+logs, tuning half, five-category error / win part / size part / score: FINAL .01032/.00648/.00385/58.156; win-only
+increment .00900/.00521/.00379/58.255; joint WIN increment (FINAL sizes kept) .00846/.00468/.00378/58.296; joint SIZE
+increment .01075/.00651/.00424/58.125 (size-side marginalization hurts; dropped). Keep check (`miss_filter="joint"`,
+win increment only): tuning 58.271 (+.115), audit 57.950 (-.036), full 58.118 (+.044), short .0617 -> .0586, bootstrap
+P = .672, 1/4 conditions -> REVERT.
+**Verdict.** The discarded ticks do carry information (win part -28% on the tuning-half short queries, exact math,
+independent code), but the gain does not hold on the audit half: with 24 short episodes per half the tuning gain is
+mostly sampling noise; full validation +.044 is within it. Not promoted. Both stay as off-by-default options.
+Recoverable headroom, honestly: ~+0.04 full-validation points (tuning-half estimate +0.12-0.14 is optimistic).
+
+## Experiment 11: hierarchical generative model, posterior predictive check, ceiling (no model promoted)
+
+**Simulator** (`genmodel.py`): type, signal -> win structure, polarity, flip, machine-level on/off rates (adi's
+signal-shifted Beta priors) -> win bits generated tick by tick; size lag from method 2's coupling table, tied
+two-state size state, learned levels and big-win split; optional size-state -> win-rate logit shift; observation
+mask copied from the real template (short logs keep their 40 + 24 layout).
+**PPC** (`ppc.py`, 20 statistics x type x short/long, real = validation + test histories, episode-disjoint from the
+fit): first version 55/80 statistics flagged (|Z| up to 24). Causes, all in the simulator not the models:
+(a) short logs flipped at 40% instead of ~5%; (b) adi stores split structures as (i, j, split_lag) and XORing all
+three cancels the repeated lag (pair gate became single lag: a simulator bug); (c) no size-state -> win link;
+(d) flip scheme. After fixing: 19 flagged, max |Z| 9 (real rate tails a little heavier than the Beta priors).
+
+**Flip structure measured on train** (`flip_time_probe.py`, conditions used for analysis only): stable machines
+never flip (0/192); drift 192/192 and shared 192/192 flip, at tau / cutoff median .70 / .68 (80% inside
+.62-.79 / .60-.74); tau scales with the cutoff (corr .77, sd ~13 ticks). **At a flip only polarity changes**
+(`flip_change_probe.py`): on/off-cell rates, P(1x | win) and the size-gate direction before vs after the flip are
+indistinguishable from a stable placebo (|d rate| ~.07 both; size-gate sign kept 99-100%).
+
+**Learned flip-time prior** (`flipprior.py`, option `flip_prior`, default off): EM histogram of relative flip
+position + no-flip mass on train histories, replacing adi's flat tau prior (flat prior reproduces adi to 5e-15).
+It learned p(no flip) = .32 and position .683 +/- .10 (truth recovered). Tuning **57.942 vs 58.156 (-0.215)**:
+long conditions unchanged (stable .0240 -> .0246, drift .0302 -> .0304, shared .0179), short .0547 -> .0692. The
+post-flip evidence already pins tau on long logs; on short logs a flip before the observed block is
+unidentifiable, so the learned prior overrides adi's tuned p_change_short = .05. Rejected.
+
+**Ceiling** (`ceiling.py`; fitted FINAL run on simulated machines with known true next-spin distribution,
+templates = validation machines, 3 replicates, bootstrap SEs): mean squared probability error, real vs simulated:
+stable .00414 vs .00348 (z +0.9), short .01095 vs .01280 (z -0.8), drift .00487 vs .00301 (z +1.9), shared
+.00497 vs .00306 (z +1.9). Stable and short sit at the ceiling the model implies. Drift and shared are ~1.6x worse
+in reality (borderline, p ~ .06 each). If that gap were fully real and closable it is worth at most ~+0.2 points.
+**Conclusion:** the generative structure (gate, polarity flip, rates, size state) is correct and our inference
+extracts what it implies; the remaining score is hidden per-machine rate noise. Achievable range ~58.1-58.3.
+
+## Experiments 9-10: bidirectional win x size inference (REVERTED on audit; final stays 58.074)
+
+**Question:** do size observations update the win-structure posterior? **No (before this):** adi's size-split gate
+uses PAST sizes as inputs to P(win), and method 2's coupling sends win evidence to the size lag only.
+
+**Joint model (`joint.py`):** P(s, tau, k | w, y) ∝ P(s) P(tau) P(w | s, tau) · pi_s(k) · P(y | w, k).
+No double counting: by the chain rule each tick's win/loss outcome is only in P(w|.), and each win's size outcome
+only in P(y|.); past values are conditioning inputs. Size -> win: reweight adi's structures by
+E_s = sum_k pi_s(k) L_k. With both directions off it reproduces FINAL to 1.1e-16.
+Option `joint_feedback` (None default | "short" | "all"), `joint_beta`.
+
+**Ablations (tuning half; FINAL gate = size_split):** one-way 58.080; size->win 58.150 (+.071; short .0577 ->
+.0506 but stable .0270 -> .0286); exact win->size with adi's posterior 57.902 (-.178: the coupling table was
+learned under method 1's structure family); both 57.972. With cell_signal: one-way 58.156, feedback all logs
+58.221, **short logs only 58.253 (+.097, other conditions unchanged)**, beta 1/2 58.201.
+
+**Keep checks (with audit):**
+| | tuning | audit | full | stable | short | drift | shared | verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| KC1: + adi cell_signal (= Adi's 598de5a) | 58.156 | 57.986 | 58.074 | .0211 | .0617 | .0257 | .0242 | KEEP, P=.999 |
+| KC2: + short-log size->win feedback | 58.253 | 57.971 | 58.118 | .0211 | .0586 | .0257 | .0242 | **REVERT**, P=.650 |
+
+KC2's audit is slightly worse (-0.015), so the +0.097 tuning gain does not generalize; final stays 58.074.
+
+**Experiment 10, uncertainty-adaptive gate (`adaptive.py`):** power posterior log P(s|w,y) = log P(s|w) +
+lam·log E_s. Gates: short-log rule; entropy of P(s|w) (no parameters); learned sigmoid(a + b·H + c·short) with a
+N(0, 2^2) prior, fit on TRAIN next-spin outcomes (labels + self-supervised cutoffs c-1, c-2, ticks < cutoff only).
+Tuning: short 58.253, entropy 58.235, learned 58.196 (it shrank to lam ≈ 0.5: binary outcomes carry little
+signal), full 58.221. Full-feedback gain on the win part by entropy tercile: long logs negative in ALL terciles
+(-.00026/-.00007/-.00011); short logs +.00197 in the top tercile, ~0 otherwise. Entropy barely varies
+(terciles .328/.353), so history length is the better proxy. No adaptive gate beats the short-log rule, and
+that rule failed on audit, so none was promoted.
+**Episode-grouped 5-fold CV on train (`adaptive_cv.py`, diagnostic; population priors shared across folds):**
+2304 examples from 96 episodes. Out-of-fold log-loss: none .28319, short .28326, entropy .28326, learned .28323,
+full .28323 (Brier .08191-.08197). All gates are within 0.0001, and "none" is marginally best. The learned
+coefficients flip sign across folds (b from -.25 to +.12): not identifiable from next-spin outcomes. This agrees
+with KC2's audit: size -> win feedback is not a robust gain.
+
+## Experiment 8: sparse two-lag size expert (REJECTED on tuning; does not change the final model)
+
+Note: evaluated against the joint-EM final (57.787) with adi's C5 gate fixed. Meanwhile Adi promoted adi's
+size-split win gate in FINAL (Update 5, full 57.960). The two-lag result is about the SIZE model, which is the
+same in both, so the rejection carries over.
+
+**Research adapted:** conditional tensor factorization (Sarkar & Dunson 2016: each lag's categories map to a few
+latent classes, which gives sparse lag selection), Bayesian context trees / context-tree weighting (exact Bayesian
+averaging over context structures instead of picking one). Implemented as `twolag.py`: the 2 x 2 context
+(big vs not at lags a, b) is mapped to the two learned levels by one of the 10 maps that use both lags.
+Exact evidence over 28 pairs x 10 maps. Pair prior is guided by method 1's win posterior (eps = .2 uniform).
+Missing lag -> 50/50 state. Bayesian mixture with the existing GateSizes expert (prior weight v by EM on train).
+
+**Phase 1 (diagnostics, `twolag_probe.py`):** oracle with true sizes 58.270 vs 57.901 tuning (+.37 max for ANY
+size model); true STATE alone 58.257, so levels are right and only the state is uncertain. True WIN prob 59.591
+(+1.69). Short-history state is wrong 26% but confidently wrong only 3%, so the error is scarce data, not
+missing structure. Train residual test, second lag given the confident first lag: excess deviance -281 vs a
+shuffled lag, i.e. no interaction.
+
+**Synthetic recovery (`twolag_synth.py`):** planted two-lag XOR -> v = .99 and the exact pair is recovered on
+59% of long machines; planted one-lag -> v = .01. The expert detects the mechanism when it exists.
+
+**Phase 3 (`twolag_eval.py`, tuning half, adi gate fixed):**
+
+| variant | tuning | vs A | stable | short | drift | shared | v | post. mass |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| A joint-EM GateSizes (final) | 57.901 | — | .0370 | .0543 | .0341 | .0197 | — | — |
+| B two-lag alone (m1 pairs) | 56.700 | -1.201 | .0517 | .0854 | .0471 | .0486 | — | 1.00 |
+| C mixture, m1 pairs | 57.878 | -0.023 | .0370 | .0544 | .0341 | .0212 | .010 | .009 |
+| D mixture, m1 top pairs only | 57.874 | -0.027 | .0370 | .0544 | .0341 | .0215 | .010 | .009 |
+| E mixture, uniform pairs | 57.898 | -0.003 | .0370 | .0544 | .0341 | .0198 | .010 | .007 |
+
+P(1x|win) error by observed wins (<20/20-40/40-80/80+): A .081/.050/.027/.010; best mixture E
+.082/.051/.028/.011. EM sends the new expert's weight to its floor on real data, matching the planted one-lag
+synthetic case. Peak memory 38 MiB; mixture size fit + predict 64-88 s (vs 27 s).
+Predeclared rule (audit only if tuning gain >= .15): not met, so no audit was run. **Conclusion:** sizes follow a
+single-lag two-state gate; the remaining error is data scarcity (+.37 ceiling). The real headroom (+1.69) is the
+WIN side (cf. adi round 4's size-split gate, 58.08).
+
+## Experiment 7: learned direction / constant-state priors (REVERTED; final stays joint EM 57.787)
+
+**Question asked:** learn the tied-cell partition prior by empirical Bayes. **It already was:** joint EM fits rho
+(big / 1x / loss split) by regularized EB, averaging over size lag and tied/free shape (sizes.py joint EM
+M-step, `part_floor`). It is .961/.02/.02. So the next most promising parameter was tested instead.
+
+**Hypothesis:** the tied model's direction (does a big win at the gate lag mean the high-1x state?) and the
+no-gate constant state were fixed at 1/2. Learning them per type should sharpen short histories, which can't
+pin the direction from about 15 wins.
+**Estimator:** joint-EM M-step, MAP with Beta(10, 10) (lambda = 20 fixed a priori, not tuned), clipped [.05, .95].
+Option `gate_learn_direction` (default False; at 1/2 it reproduces the final model bit for bit, SHA 450755db).
+
+**Learned on full train:** direction steady .487, balanced .479, jackpot .545 (MLE .496/.470/.569);
+constant state .545/.448/.533 (MLE .95/.15/.95: no-gate machines are rare, so this is poorly identified).
+The direction skew seen earlier (31:13 on confident stable machines) does not hold population-wide.
+
+| model | tuning | audit | full | stable | short | drift | shared |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| final (joint EM) | 57.901 | 57.665 | 57.787 | .0321 | .0644 | .0296 | .0271 |
+| + learned direction | 57.906 | 57.666 | 57.790 | .0321 | .0641 | .0296 | .0272 |
+
+Bootstrap P(better) = 0.83 (< .95), 3/4 conditions → **REVERT** (kept as an option). Conclusion: direction is
+genuinely about 50/50 per type, so there is no population-level information to borrow; short histories must
+learn it from their own data. Next candidate: re-estimate the two state levels (lo/hi) inside joint EM
+(they still come from NPMLE atoms fitted on best-hypothesis cells).
+
+## ★★★★ Update 4: joint EM (current final)
+Training now fits the tie weight, split prior, lag prior and coupling table jointly by EM over every
+(size lag, cell shape) instead of at each machine's best free lag (selection bias). Main effect: split prior
+big-vs-rest .58 → .96, which sharpens short histories. Final: tuning 57.901, audit 57.665, full 57.787;
+short .071 → .064. Details: `python -m method2_sizes.joint_em_compare`.
+
+## ★★★ Update 3: current best and team recommendation → see TEAM_SUMMARY.md
+adi C5 gate × method 2 sizes (coupled + tied, learned tie weight): tuning 57.746, audit 57.490, full 57.622.
+Error decomposition: 79% of remaining error is the win side (jackpot win-rate estimation), 21% sizes.
+
+## ★★ Update 2: short-history fix (supersedes the size-gate candidate below)
+
+**Candidate:** `{"sizes":"gate","gate_cell_prior":"npmle","gate_couple":true,"gate_couple_iters":20,"gate_tied":true}`
+
+| | tuning | audit | full validation (kit) | short ratio (full val) |
+| --- | --- | --- | --- | --- |
+| current entry (NPMLE sizes) | 55.054 | 54.795 | 54.927 | .132 |
+| size gate (update 1) | 56.037 | 56.377 | 56.191 | .125 |
+| **+ coupling + tied** | **56.999** | **56.974** | **56.985 (+2.06)** | **.107** |
+
+Full-validation loss ratios: stable .034, short .107, drift .039, shared .032. Runtime ≈ 52 s for fit + validation +
+test. Deterministic.
+
+Short history had the largest size headroom (true sizes: .125 → .071). The cause was data: only about 15 wins fall
+in the 40-tick window, where the gate lag is observable. Two findings let short machines borrow strength:
+
+1. **The size-gate lag is tied to the machine's own win gate** (`share_probe.py`, confident train machines):
+   win pair (1,3) → size lag 1 (24/24), (2,5) → 2 (38/38), (4,7) → 4 (38/38). It is NOT shared within an
+   episode (same lag 0.29 vs chance 0.33), and its direction is not tied to win polarity, signal or type.
+   The win gate is identified from every tick with a ±0.8 effect, so it pins the size lag.
+   → `gate_couple`: size-lag prior = Σ_s P(win structure s | history) · P(size lag | s). The table is learned
+   by EM on train over the joint latent (s, lag). It learns 0.93–0.94 on the matching lag. Flips are marginalized
+   as in method 1 (adi's C0 lesson: structure ID must be flip-aware). `couple_mix` = 0.1 keeps some global
+   prior (0.02 vs 0.1 differs by 0.03 → kept 0.1 for safety). Tuning +0.63.
+2. **The gate is two-state**: at the gate lag, "after a loss" and "after a 1×" share a state and "after a big win"
+   is the opposite (87 of about 120 confident machines; the rest are uncertain).
+   → `gate_tied`: per lag, mix free cells with tied hypotheses: one of 3 two-group splits × direction, groups at
+   the type's two learned levels (from the NPMLE atoms). The split prior is learned (big-vs-rest .58, 1× .17,
+   loss .25). Free cells remain, so a round-2 mechanism that isn't two-state falls back automatically.
+   tie_weight is flat over .5–.9 (56.94–57.05); kept .7. Tuning +0.33; short .113 → .100.
+
+Rejected / nothing to borrow: episode sharing of lag or direction, direction from win polarity / signal / type.
+
+**Remaining short-history headroom is mostly on the WIN side now:** with true win probability, short drops to .054.
+That belongs to method 1 (A6 asymmetric learned cell priors, C5 stronger priors for 64-tick logs).
+
+## ★ Update: the size gate (supersedes the "Recommendation" at the bottom)
+
+**Where the points were going** (`python -m method2_sizes.diagnose`, validation tuning half):
+
+| swap in the truth for… | points |
+| --- | --- |
+| nothing (lag + hl64 candidate) | 55.23 |
+| sizes only | 57.56 (+2.3) |
+| win probability only | 57.43 (+2.2) |
+
+Sizes cost as many points as the win gate does. The old model's sizes correlated only 0.4–0.57 with the truth.
+
+**Structure of the true sizes** (validation targets, diagnosis only):
+1. Given a big win, the 2×/5×/20× split is **exactly constant per type** (sd 0.0000): balanced .696/.261/.043,
+   jackpot .368/.474/.158, steady .800/.196/.004. Fault in the old model: it estimated this per machine (noise).
+2. P(1×|win) takes **exactly two values per type**: balanced .214/.500, jackpot .121/.335, steady .455/.754.
+   It's a binary hidden "size gate", like the win gate.
+3. Train histories (`state_search.py`): the gate follows the **payout category (loss/1×/big) at one earlier lag**:
+   lags 1, 2, 4 dominate (excess G ≈ 1200 each vs ≈ 500 for any pair). Lag and direction are per machine; pooled
+   tables are flat. Example machine: P(1×|win) = .30 after a 1× at lag 1, .89 after a big win.
+
+**Model: `GateSizes`** (`sizes="gate"`, `gate_cell_prior="npmle"`):
+- a = P(1×|win) by Bayesian model averaging over "gate at lag k" (k = 1..8, cells loss/1×/big/missing) and "no gate".
+- Prior over a per cell = NPMLE on a grid, learned from train. It **found the two levels unaided**
+  (steady ≈ .45/.75, balanced ≈ .20/.52, jackpot ≈ .10/.34).
+- Hypothesis prior learned from train. It **picked lags 1, 2, 4 unaided** (.19/.18/.17 vs ≈ .08 for the others).
+- Big-win split pooled per type, with a self-check: Minka concentration learned from train
+  (≈ 60–77 here; it drops to ≈ 9 on a simulated per-machine split, so it falls back to per-machine counts automatically).
+
+**Results** (current entry = NPMLE: tuning 55.054, audit 54.795, full validation 54.927):
+
+| setting | tuning | audit | full validation (kit checker) |
+| --- | --- | --- | --- |
+| gate, Beta cells, strength 4 | 55.798 | | |
+| gate, Beta cells, strength 10 | 55.947 | | |
+| gate, Beta cells, strength 10, max lag 4 | 56.004 | | (round-1 specific, not used) |
+| gate, NPMLE cells, pooled split | 56.088 | | |
+| **gate, NPMLE cells, self-checking split** | **56.037 (+0.98)** | **56.377 (+1.58)** | **56.191 (+1.26)** |
+
+Per-condition loss ratios (full validation): stable .074→.045, drift .086→.051, shared .077→.050, short .132→.125.
+Runtime: fit + validation + test ≈ 25 s. Deterministic (byte-identical rerun).
+
+**Why this should carry to round 2:** nothing round-specific is hard-coded. The lags searched (1..8), the state
+levels, the lag prior and the big-win split all come from `fit()` on that round's train histories. The settings are
+insensitive (strength 4 vs 10 makes no difference with NPMLE cells). The only round-1-specific option
+(max lag 4) was rejected.
+
+**Still weak:** short history (ratio .125). With about 30 wins, the gate lag can't be identified per machine.
+
+---
+
+
+All diagnostics use **train histories only** (`python -m method2_sizes.analysis --data data/main`,
+`python3 method2_sizes/feature_search.py`). Scores use `common.evaluate` (kit tuning/audit halves)
+with the gate held fixed, so differences come from the size model alone.
+
+## B1: mechanism test (does a win's size depend on earlier payouts?)
+
+**Pooled across machines: no.** A G-test of size × payout at lag k (1..8) and size × previous win's size,
+per machine type, against a within-machine shuffle (50 draws) yields 1 of 27 tests at p < 0.05, which is what
+chance alone predicts.
+
+**Per machine: yes, weakly.** Summing each machine's own G statistic (size × win/loss at lag k):
+
+| lag | G | shuffled null | p (20 draws) |
+| --- | --- | --- | --- |
+| 1 | 2156 | 1602 | ≤ 0.05 (above every null draw) |
+| 2 | 2069 | 1603 | ≤ 0.05 |
+| 3 | 1732 | 1616 | ≤ 0.05 |
+| 4 | 1920 | 1557 | ≤ 0.05 |
+| 5–8 | ≈ null | | 0.14–0.38 |
+
+So the size mix after a win differs from the mix after a loss, with a **direction that differs by machine**
+(the opposite directions cancel in the pooled test). A feature search over single lags and all XOR pairs (lags 1..8)
+finds **lag-1 win/loss** to be the best size covariate for 193 of 768 machines. No XOR pair stands out, unlike the
+win gate. Part of this signal is probably slow drift in sizes (see below), which also creates a correlation
+between sizes and recent wins.
+
+→ Made it a covariate: `LagSizes` (sizes.py).
+
+## Sizes move over time
+
+The z-score of P(1×|win) between first and second halves has var(z) = 1.00 for short history, 1.12 for stable,
+1.22 for drift and 1.25 for shared change (1.0 = no change). Sizes drift a little, mostly in drift and
+shared-change episodes. → Recency-weighted NPMLE counts (B4).
+
+## B2: episode-wide size shifts — not pursued
+
+Within-episode correlation (ICC) of machines' late-minus-early P(≥2×|win): stable +0.02, drift −0.08,
+shared change −0.00. **Machines do not shift sizes together**, so an episode-level size covariate has nothing
+to pick up. Not implemented; revisit in round 2 if this ICC changes.
+
+## B3: size change point via the gate's flip posterior — not done
+
+`method1_gate.gate.win_probability` returns only P(win), not the flip posterior. B3 needs Person A to expose it.
+Since sizes drift only mildly and B4 already captures most of that, the expected gain is small.
+
+## Results (validation tuning half; baseline NPMLE = 55.054)
+
+| sizes setting | tuning | Δ | stable | short | drift | shared |
+| --- | --- | --- | --- | --- | --- | --- |
+| npmle (current entry) | 55.054 | — | .0738 | .1313 | .0897 | .0646 |
+| dirichlet(30) | 54.884 | −0.17 | .0805 | .1363 | .0891 | .0670 |
+| B6 minka (per-type fitted α) | 54.990 | −0.06 | .0819 | .1282 | .0894 | .0649 |
+| B5 npmle min_wins 20 / 60 | 55.055 / 55.054 | 0 | | | | |
+| B4 npmle half_life 64 | 55.131 | +0.08 | .0776 | .1270 | .0878 | .0608 |
+| B4 npmle half_life 128 | 55.127 | +0.07 | .0753 | .1288 | .0880 | .0615 |
+| B4 npmle half_life 256 | 55.097 | +0.04 | | | | |
+| B1 lag [1], strength 8 / 20 / 50 | 54.770 / 55.028 / 55.137 | | | | | |
+| B1 lag [1], strength 100 | 55.146 | +0.09 | .0731 | .1282 | .0886 | .0622 |
+| B1 lag [1], strength 200 | 55.126 | +0.07 | | | | |
+| B1 lags [1,2], strength 20 | 54.662 | −0.39 | | | | |
+| **lag [1] s=100 + npmle hl 64** | **55.227** | **+0.173** | .0747 | .1245 | .0874 | .0591 |
+| lag [1] s=100 + npmle hl 128 | 55.207 | +0.15 | .0738 | .1261 | .0875 | .0599 |
+
+**Audit half (run once):** candidate 54.851 vs baseline 54.795 (+0.056, same direction) → meets rule 6.
+
+**Full validation, official kit checker** (`kit/check_submission.py --split validation`):
+baseline 54.927 → candidate **55.044 (+0.117)**. All four conditions improve
+(stable .0744→.0734, short .1317→.1289, drift .0864→.0841, shared .0770→.0738).
+
+## Recommendation
+
+Adopt `{"sizes": "lag", "lag_strength": 100, "npmle_half_life": 64}` as the size model. It's worth about
++0.1–0.17 points, uses only the standard library, is deterministic (byte-identical rerun), and adds
+under 1 s of runtime. The remaining size headroom (about +2.5 with true sizes) is mostly hidden state;
+nothing else tested here moves it.
+For round 2, re-run `analysis.py` and `feature_search.py` first: the lag that drives sizes may change.
