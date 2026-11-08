@@ -31,3 +31,11 @@ train +0.18 (t=9.3), test +0.24 (t=18.1); placebo with another episode's peers ~
 - Test CSV and fresh-unzip reproduction: pending, added in a follow-up commit.
 
 Edge case: a peer with zero observed ticks before the cutoff would divide by zero; impossible on this kit (min 64 observed ticks).
+
+## Verification (11:45 CST)
+- `submission.csv` (SHA-256 e3d5f7f0a3a43931fd9de6fef02000b86e4d413f50af4415cee8c97f30ad2a88) = output of `entry_xm.zip` (2ff8b495...) run in its folder; kit checker VALID, 1,536 queries.
+- Fresh unzip into a new read-only folder, read-only data copy, exact `reproduce.json` command: byte-identical CSV (max diff 0.0). 1,027 s wall, 810 s user CPU, 2 BLAS threads, 202 MB peak RSS, on a loaded 8-core Mac (load ~8). Under 30 min.
+- Validation from the ZIP's code (`validation/zipcode_validation.csv`): kit checker 19.659196 / 20; max diff 7.4e-6 vs the originally scored CSV (Thanos fit on another machine).
+- File-open audit (`validation/opened_files.json`): only train/validation/test `queries.csv` + `history.csv` read; no targets, labels, conditions or reference.
+- beta robustness (`xfit.py`): every beta 0.25..4 gains on both halves; 20 random half-splits fit-on-one/score-other: positive 19/20, fitted beta 2-3.
+- Not verified: organizer container (Python image, 2-core cap, pinned install); cross-machine reproduction within 1e-8 (plain Thanos already differs ~3e-6 across machines).
