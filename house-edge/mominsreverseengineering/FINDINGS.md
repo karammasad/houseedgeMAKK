@@ -3,6 +3,35 @@
 Ledger of hypotheses, tests and verdicts. Newest at the top. Each entry: hypothesis, test, numbers, verdict, why.
 Reverts stay here as negative results. See CONTROL.md for the keep rule.
 
+## Entry 8: flip-fair control (`prefixdiag_flipfair.py`): a real but smaller gain SURVIVES; conditional GO to ONE ablation, not to a tuning evaluation
+
+Same pseudo-queries, prefixes, targets, folds and scoring code as Entry 7 (reproduced exactly: V0 Brier and HD - V0 identical in all six settings).
+V0ff = v8 with its flip prior set to 1e-9 on every path. Verification: V0ff vs a computation that passes no flip times at all: max difference 9.1e-9 over
+4,480 sampled rows (original v8 differs from no-flip by 0.0037 on average). Flip prior used by original v8: .05 for n10 / n20 / n40 (100% classed short),
+.5 for n80 and full (0% short), and a mix for the real short layout (17% short): this confirms the Entry 7 confound.
+Paired difference (x1e-4, negative = first model better; 95% CI clustered by episode; 72 long-log episodes, 8,464 pseudo-queries per setting):
+
+| information | V0ff - V0 (flip handicap) | HD - V0 (Entry 7) | HD - V0ff (FAIR) | HA - V0ff (FAIR) | gain that disappears |
+| --- | --- | --- | --- | --- | --- |
+| 10 ticks | -0.28 | -8.35 | -8.07 [-13.89, -2.09] | -7.38 [-12.82, -1.49] | 3% |
+| 20 ticks | -1.36 | -5.80 | -4.44 [-10.68, +1.45] | -3.81 [-9.91, +1.68] | 23% |
+| 40 ticks | -1.54 | -8.51 | -6.96 [-12.77, -1.31] | -5.83 [-12.03, -0.10] | 18% |
+| 80 ticks | -14.71 | -22.98 | -8.26 [-13.78, -3.07] | -7.08 [-12.62, -1.81] | 64% |
+| real short layout | -14.55 | -22.58 | -8.03 [-13.73, -2.43] | -6.86 [-12.46, -1.37] | 64% |
+| full history | -14.16 | -22.78 | -8.62 [-13.84, -3.37] | -8.76 [-14.00, -3.36] | 62% |
+
+By type, HD - V0ff: jackpot carries it (-21 to -24 at 40 ticks, real short layout and full, CIs exclude 0); steady is about 0 (+0.3 to +1.3, CIs include 0) except
+n10 (-21); balanced is negative but its CIs include 0 (n10 -8.1, n40 -4.4, short layout -5.1, full -7.3).
+Numerical validity: 3 of 8 cross-fits did not converge (HA folds 0 and 3, HD fold 2, all at the 120-iteration cap); HD steady rho sat at its bound in the full fit.
+The gain does NOT depend on the unverified correlation: HA (no rho) gives -6.9 to -8.8, within about 1e-4 of HD.
+Reading: about 62-64% of the Entry 7 gain at n80 / short layout / full was the flip handicap; the remainder (about -8e-4 on P(win)) is real in this window, significant
+in 5 of 6 settings (not at 20 ticks), and largest for jackpot. Still NOT deployable: no change-point model, pairs hardcoded, no deployable flip-aware form yet; it can
+only help flip-free machines (stable and short-history), not drift or shared change. Caveat: the gain at FULL history is large for a pure prior effect, which points to
+structure (pooling the six sub-cells under one shared base rate per side), not tighter strengths.
+Next single ablation (NOT run): HD with the size shift forced to zero (the fitting code already supports `gam_fixed=0`). If the gain stays, the source is shared base
+rates / tighter priors and the failed `state_shift` run was the wrong half of the idea; if it vanishes, the shift is the source. It does not separate pooling from tightness
+or from the structure restriction; those would be later, separate ablations.
+
 ## Entry 7: hierarchy fits and the prefix diagnostic (train only, cross-fitted): NOT PROVEN, comparison is biased toward the alternative
 
 **Seven population fits** (`hierarchy.py`, 768 machines, rates integrated out on a logit grid; log-likelihoods A -19269.7, B -19268.4,
