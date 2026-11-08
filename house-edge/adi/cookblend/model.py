@@ -23,6 +23,7 @@ from adi.stack.model import Model as Stack
 class Model:
     def __init__(self, w=0.5, cook=None, stack=None, workers=None):
         ck = dict(cook or {}); sk = dict(stack or {})
+        ck.setdefault("size_menu", False); ck.setdefault("size_couple", False)  # the submitted main entry (CSV 8cc8b2a7) predates the size menu (round 12)
         if workers is not None:
             ck.setdefault("workers", workers); sk.setdefault("workers", workers)
         self.w = w; self.a = Cook(**ck); self.b = Stack(**sk)

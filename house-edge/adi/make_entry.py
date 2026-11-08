@@ -45,6 +45,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--method", required=True); ap.add_argument("--kwargs", default="{}")
     ap.add_argument("--data", required=True); ap.add_argument("--out", required=True)
+    ap.add_argument("--csv", help="use this already-predicted test CSV instead of predicting from the staged copy; the "
+                                  "fresh-unzip rerun must still reproduce it byte for byte (saves one full fit)")
     a = ap.parse_args()
     out = os.path.abspath(a.out); src = os.path.join(out, "entry_src")
     if os.path.exists(out):
@@ -71,17 +73,22 @@ def main():
     with open(os.path.join(src, "reproduce.json"), "w") as f:
         json.dump({"image": "python", "command": ["python", "predict.py", "--data", "/data", "--out", "/output/submission.csv"]}, f, indent=2)
     csv_path = os.path.join(out, "submission.csv")
-    run([sys.executable, "predict.py", "--data", os.path.abspath(a.data), "--out", csv_path], cwd=src)
+    if a.csv:
+        shutil.copy(a.csv, csv_path)
+    else:
+        run([sys.executable, "predict.py", "--data", os.path.abspath(a.data), "--out", csv_path], cwd=src)
     digest = hashlib.sha256(open(csv_path, "rb").read()).hexdigest()
     with open(os.path.join(src, "README.md"), "w") as f:
         f.write(f"""# House Edge entry
 
 - Method: `{a.method}` with settings `{a.kwargs}` (see entry_config.json)
-- Environment: "python" image, Python 3.13, standard library only{" - except method4_ml, which needs scikit-learn" if a.method == "method4_ml" else ""}
+- Environment: "python" image, Python 3.13, standard library only{" - except method4_ml, which needs scikit-learn" if a.method == "method4_ml" else ""} (no requirements.txt needed)
 - Forecast SHA-256: {digest}
+- Data paths: reads `<data>/train` (histories, labels) and the histories of `<data>/validation` and `<data>/test`; writes only `--out`.
+- Seeds: every random choice uses fixed string-seeded `random.Random` instances; runs are byte-identical.
 
 Recreate: `python predict.py --data /data --out /output/submission.csv` (run from this folder).
-It refits from `/data/train` (deterministic, no randomness) and predicts `/data/test`. No saved checkpoint is needed.
+It refits from `/data/train` and predicts `/data/test` (adi.stack, if used, also loads its saved tree checkpoint).
 """)
     pub = os.path.join(os.path.abspath(a.data), "public") if os.path.isdir(os.path.join(a.data, "public")) else os.path.abspath(a.data)
     run([sys.executable, os.path.join(ROOT, "kit", "check_submission.py"), csv_path, "--data", pub])

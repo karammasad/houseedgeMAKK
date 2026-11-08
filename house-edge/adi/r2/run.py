@@ -6,8 +6,12 @@
 2. Fits the candidates on the new kit's train data:
      r2    adi.r2      wide, re-learned structure family (see adi/r2/model.py)
      main  adi.sizewin the exact 58.21 main-round model settings (safety net)
-     cook  adi.cook    adi.r2 + two-level hierarchical size-split cells on short logs, kappa per type by train
-                       evidence (main data: tuning 58.277 / audit 58.208 vs adi.r2 58.238 tuning)
+     cook  adi.cook    adi.r2 + two-level hierarchical size-split cells on short logs (kappa per type by train
+                       evidence) + exact two-vector size menu learned from history ticks (port of method4 v8)
+                       + GateSizes' size-lag coupling driven by adi's win posterior (adi round 13)
+                       (main data: tuning 58.318 / audit 58.279 / full 58.297)
+     cook_nomenu       the same without the size menu, in case round two's sizes stop being two-state
+                       (main data: 58.277 / 58.208 / 58.243)
 3. Scores each on the new validation set (tuning / audit / full, per condition) with the official metric.
 4. Picks the candidate with the higher TUNING-half score (the audit half stays an honest check; a candidate is only
    preferred if its audit doesn't drop by more than 0.3 points relative to the best other audit).
@@ -16,14 +20,15 @@
    adi.make_entry (fresh-unzip rerun must be byte-identical) into <out>/entry/.
 Upload <out>/entry/submission.csv and <out>/entry/entry.zip (identical CSV to <out>/submission.csv).
 
-Options: --only r2|main|cook (skip the comparison), --no-build (skip ZIP), --workers N.
+Options: --only r2|main|cook|cook_nomenu (skip the comparison), --no-build (skip ZIP), --workers N.
 """
 import argparse, importlib, json, os, subprocess, sys, time
 from common.data import public_dir, write_predictions
 from common.evaluate import folds, points, CONDITIONS
 
 HERE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-CANDIDATES = {"r2": ("adi.r2", {}), "main": ("adi.sizewin", {}), "cook": ("adi.cook", {"inner": "r2"})}
+CANDIDATES = {"r2": ("adi.r2", {}), "main": ("adi.sizewin", {}), "cook": ("adi.cook", {"inner": "r2", "size_couple": "adi"}),
+              "cook_nomenu": ("adi.cook", {"inner": "r2", "size_couple": "adi", "size_menu": False})}
 
 
 def describe(m):
@@ -37,6 +42,9 @@ def describe(m):
     out.append("  size-state correction coef = " + ", ".join(f"{c:+.3f}" for c in m.coef))
     if getattr(m, "kappa_fit", None) is not None:
         out.append(f"  cook short-log sub-cell kappa per type = {m.kappa_fit}  (train evidence vs off: {getattr(m, 'kappa_evidence', '')})")
+    if getattr(m, "menu", None):
+        for t, (v1, v2) in sorted(m.menu.items()):
+            out.append(f"  size menu {t:8s} V1 " + " ".join(f"{x:.3f}" for x in v1) + "   V2 " + " ".join(f"{x:.3f}" for x in v2))
     tw = getattr(m.base.sizes, "tie_weight", None)
     if tw is not None:
         out.append(f"  GateSizes tie weight = {tw}")
@@ -61,7 +69,7 @@ def main():
     maxp = float(meta.get("max_points", 40)); has_t = os.path.exists(os.path.join(pub, "validation", "targets.csv"))
     tune, audit = folds(pub) if has_t else (None, None)
     res = {}
-    for name in ([a.only] if a.only else ["r2", "main", "cook"]):
+    for name in ([a.only] if a.only else ["r2", "main", "cook", "cook_nomenu"]):
         method, kw = CANDIDATES[name]; kw = dict(kw)
         if a.workers:
             kw["workers"] = a.workers

@@ -401,3 +401,56 @@ byte-identical, kit check OK, CSV SHA-256 8cc8b2a7... (numpy-free Python 3.14). 
 Round two: `adi.r2.run` now also fits `cook` = adi.cook on adi.r2 (stdlib, refits itself; the blend needs re-exported
 trees, so it is main-only). Rehearsal on main data picks cook: 58.277 / 58.208 / full 58.243 (r2 58.238 / 58.212 / 58.224);
 the runbook takes ~15 min longer.
+
+## Round 12: stdlib port of method4 v8's exact two-vector size menu (KEEP for round two)
+
+Kareem's v8 (e46c44d, RESEARCH_LOG #34-35): given a win, the true size distribution is one of exactly two vectors per machine
+type, identical across machines; snapping each size prediction onto the segment between two vectors learned from HISTORY
+ticks removes the size model's drift. v8 needs numpy + scikit-learn. `adi/cook/menu.py` is the same algorithm (same seeds,
+menu_k 32, train + validation + test histories, alternating least squares) in plain Python; `adi.cook` applies it by default
+(`size_menu`), snapping each forecast's [p1, p2, p5, p20] / P(win).
+
+| | tuning | audit | full |
+| --- | --- | --- | --- |
+| adi.cook (main inner), no menu | 58.253 | 58.207 | 58.229 |
+| **adi.cook (main inner) + menu** | **58.298** | **58.245** | **58.270** |
+| adi.cook (r2 inner), no menu | 58.277 | 58.208 | 58.243 |
+| **adi.cook (r2 inner) + menu** | **58.322** | **58.244** | **58.283** |
+| (method4 v8, scikit-learn) | 58.309 | 58.287 | 58.297 |
+
+Bootstrap, main inner, menu vs no menu: +0.041, P(better) 1.000, 4/4 conditions better. Same gain as v8's (+0.048), both halves.
+Too late for the main round (closed 9 PM). Round two: `adi.r2.run` fits `cook` (with menu) and `cook_nomenu`, so the new
+validation set decides whether the two-vector structure still holds.
+
+## Round 13: where the last points are, and adi's gate posterior inside the size coupling
+
+**Oracle decomposition** (`adi/cook/oracle.py`, analysis only, on adi.cook r2 + menu, full 58.283): true P(win) -> 59.625
+(+1.34), true sizes -> 58.644 (+0.36). The size gap is ~80% short_history (true short sizes alone -> 58.574); long-log sizes
+are within +0.01-0.04 of perfect. Short-log size error by state certainty (two known menu vectors): 56-87% comes from
+machines where the size STATE is unsure (prediction between the two vectors), not from wrong vectors.
+
+**Cause:** GateSizes picks the size lag with a prior coupled to the win structure, but reads the win structure from its own
+method-1 gate (flat Beta(.5,.5) cells, no type priors / signal slopes / short-log flip prior), which is weak on short logs.
+**Fix** (`adi/cook/couple.py`, `size_couple: "adi"`): GateSizes' `_win_posterior` returns adi's structure posterior (mapped onto
+its lag pairs); the coupling table is re-learned by GateSizes' own EM on train under it. Menu fit bypasses it (speed).
+
+| r2 inner, size menu on | tuning | audit | full |
+| --- | --- | --- | --- |
+| method-1 coupling (round 12) | 58.322 | 58.244 | 58.283 |
+| **adi coupling** | 58.318 | **58.279** | **58.297** |
+| adi coupling + long-log flip prior learned (0.65 by +34 nats) | 58.324 | 58.255 | 58.289 |
+| (method4 v8, scikit-learn) | 58.309 | 58.287 | 58.297 |
+
+adi coupling vs round 12: +0.015 full, P(better) .818, short_history .0562 -> .0551, other conditions unchanged. Adopted in
+`adi.r2.run`'s cook candidates. Learned long-log flip prior: evidence clearly prefers 0.65 over the fixed 0.5 on main
+train, but validation is slightly worse (stable .0186 -> .0192): kept as an opt-in (`p_change_long: "learn"`) for a round
+whose reversal rate changes. Adaptability audit: everything structural is learned in fit() except p_change (long) and
+tau_min=40 / one flip per machine (both match the guide's description of the conditions).
+
+Determinism bug found and fixed (round 13): the first couple.py kept GateSizes' fit-time machine lookup (keyed by list id)
+after fit; freed ids were reused by later history slices, so some predictions picked up another machine's type/signal
+prior and the fresh-unzip rerun mismatched (647908fa vs 020a2b3e). Now the lookup lives only during fit and checks object
+identity. After the fix: scores unchanged (58.318 / 58.279 / 58.297), fresh-unzip rerun byte-identical (8daa683f), and
+in-process vs fresh test predictions identical (max diff 0.0). Runtime of the r2 cook entry: 1176 CPU-s, 527 s wall on
+this laptop (Python 3.12). Menu from train histories only: 58.295 / 58.259 / 58.275 (worse) and not faster, so all
+histories are kept.
