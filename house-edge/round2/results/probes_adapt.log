@@ -1,0 +1,74 @@
+tuning half: 384 queries, 48 episodes (audit half untouched)
+== sizes: distinct P(size | win) vectors per type (rounded to 3 decimals)
+  balanced    2 distinct vectors; top 2 cover 100%; top: [0.5, 0.348, 0.13, 0.022] x85; [0.214, 0.547, 0.205, 0.034] x64
+    -> MENU HOLDS (<=2 vectors)
+  jackpot     2 distinct vectors; top 2 cover 100%; top: [0.335, 0.245, 0.315, 0.105] x81; [0.121, 0.324, 0.416, 0.139] x65
+    -> MENU HOLDS (<=2 vectors)
+  steady      2 distinct vectors; top 2 cover 100%; top: [0.754, 0.197, 0.048, 0.001] x53; [0.455, 0.436, 0.107, 0.002] x36
+    -> MENU HOLDS (<=2 vectors)
+== winrate: true P(win) by type x signal (continuous vs few levels)
+  balanced  signal -1: n= 52 mean 0.370 sd 0.366 distinct  43 (n=52) range 0.011-0.932
+  balanced  signal +0: n= 49 mean 0.491 sd 0.409 distinct  41 (n=49) range 0.013-0.937
+  balanced  signal +1: n= 48 mean 0.442 sd 0.399 distinct  45 (n=48) range 0.021-0.964
+  jackpot   signal -1: n= 47 mean 0.151 sd 0.241 distinct  29 (n=47) range 0.002-0.811
+  jackpot   signal +0: n= 49 mean 0.268 sd 0.313 distinct  32 (n=49) range 0.004-0.813
+  jackpot   signal +1: n= 50 mean 0.293 sd 0.344 distinct  38 (n=50) range 0.006-0.875
+  steady    signal -1: n= 33 mean 0.557 sd 0.406 distinct  30 (n=33) range 0.043-0.978
+  steady    signal +0: n= 32 mean 0.635 sd 0.380 distinct  30 (n=32) range 0.090-0.980
+  steady    signal +1: n= 24 mean 0.612 sd 0.379 distinct  23 (n=24) range 0.119-0.984
+  -> discrete menu only if `distinct` is far below n within each cell
+== signal: does signal predict the size state (nearer V1 or V2) or the win level?
+  balanced  hi-1x state share by signal: -1: 33/52, +0: 30/49, +1: 22/48
+            mean P(win) by signal: -1: 0.370, +0: 0.491, +1: 0.442
+  jackpot   hi-1x state share by signal: -1: 24/47, +0: 32/49, +1: 25/50
+            mean P(win) by signal: -1: 0.151, +0: 0.268, +1: 0.293
+  steady    hi-1x state share by signal: -1: 21/33, +0: 19/32, +1: 13/24
+            mean P(win) by signal: -1: 0.557, +0: 0.635, +1: 0.612
+  -> a hidden-parameter signal would show a state share near 0 or 1 for some signal, not ~even splits
+== variance: share of true P(win) variance explained by groups (eta^2; episode is the ICC proxy)
+  type           groups   3  eta^2 0.129
+  signal         groups   3  eta^2 0.013
+  type x signal  groups   9  eta^2 0.146
+  episode        groups  48  eta^2 0.126
+  condition      groups   4  eta^2 0.005
+  -> episode eta^2 is inflated by small groups (8 machines each); compare with its chance level ~ groups/n
+== cells: true P(win) is bimodal (gate on/off). Within each mode, per type: mean, sd, and by-signal means
+  balanced  off n= 76 mean P 0.053 sd 0.036 (logit sd 0.73)  by signal -> -1: 0.038, +0: 0.042, +1: 0.079
+  balanced  on  n= 73 mean P 0.829 sd 0.096 (logit sd 0.71)  by signal -> -1: 0.758, +0: 0.857, +1: 0.871
+  jackpot   off n= 91 mean P 0.012 sd 0.009 (logit sd 0.67)  by signal -> -1: 0.009, +0: 0.010, +1: 0.018
+  jackpot   on  n= 55 mean P 0.615 sd 0.167 (logit sd 0.77)  by signal -> -1: 0.488, +0: 0.612, +1: 0.706
+  steady    off n= 39 mean P 0.161 sd 0.075 (logit sd 0.55)  by signal -> -1: 0.114, +0: 0.178, +1: 0.206
+  steady    on  n= 50 mean P 0.942 sd 0.030 (logit sd 0.59)  by signal -> -1: 0.926, +0: 0.947, +1: 0.956
+  -> a discrete rate menu would show tiny sd within a mode; Beta-like noise shows sd ~0.08-0.16
+== shape: Beta vs logit-normal likelihood of true cell rates (diagnosis; positive = logit-normal better)
+  balanced  off signal -1 n=28  loglik logit-normal    70.37  Beta    69.72  diff  +0.66
+  balanced  off signal +0 n=22  loglik logit-normal    54.71  Beta    53.87  diff  +0.84
+  balanced  off signal +1 n=26  loglik logit-normal    48.07  Beta    48.24  diff  -0.17
+  balanced  on  signal -1 n=24  loglik logit-normal    19.51  Beta    20.12  diff  -0.61
+  balanced  on  signal +0 n=27  loglik logit-normal    38.68  Beta    37.60  diff  +1.08
+  balanced  on  signal +1 n=22  loglik logit-normal    29.20  Beta    29.22  diff  -0.02
+  jackpot   off signal -1 n=33  loglik logit-normal   130.84  Beta   131.02  diff  -0.18
+  jackpot   off signal +0 n=28  loglik logit-normal   111.91  Beta   110.27  diff  +1.64
+  jackpot   off signal +1 n=30  loglik logit-normal    99.17  Beta    98.21  diff  +0.96
+  jackpot   on  signal -1 n=14  loglik logit-normal     4.68  Beta     4.50  diff  +0.18
+  jackpot   on  signal +0 n=21  loglik logit-normal    11.84  Beta    11.66  diff  +0.18
+  jackpot   on  signal +1 n=20  loglik logit-normal    16.50  Beta    16.68  diff  -0.18
+  steady    off signal -1 n=15  loglik logit-normal    26.71  Beta    27.17  diff  -0.46
+  steady    off signal +0 n=13  loglik logit-normal    18.27  Beta    18.23  diff  +0.04
+  steady    off signal +1 n=11  loglik logit-normal    12.63  Beta    12.24  diff  +0.39
+  steady    on  signal -1 n=18  loglik logit-normal    37.42  Beta    37.72  diff  -0.30
+  steady    on  signal +0 n=19  loglik logit-normal    45.43  Beta    44.72  diff  +0.71
+  steady    on  signal +1 n=13  loglik logit-normal    31.13  Beta    31.16  diff  -0.04
+  total over 384 values: logit-normal minus Beta = +4.7 log-lik units (+0.012 per value)
+  -> a few units is noise at this n; >10 would justify the logit-normal gate prior test
+== state: size state vs win rate, within type x gate mode (truth, tuning half)
+  balanced  off high-1x state: n=41 mean P(win) 0.031 | low-1x state: n=35 mean 0.079 | diff -0.048  state explains 44% of within-mode variance
+  balanced  on  high-1x state: n=44 mean P(win) 0.774 | low-1x state: n=29 mean 0.911 | diff -0.136  state explains 48% of within-mode variance
+  jackpot   off high-1x state: n=53 mean P(win) 0.008 | low-1x state: n=38 mean 0.018 | diff -0.011  state explains 37% of within-mode variance
+  jackpot   on  high-1x state: n=28 mean P(win) 0.499 | low-1x state: n=27 mean 0.734 | diff -0.235  state explains 50% of within-mode variance
+  steady    off high-1x state: n=21 mean P(win) 0.125 | low-1x state: n=18 mean 0.204 | diff -0.079  state explains 28% of within-mode variance
+  steady    on  high-1x state: n=32 mean P(win) 0.932 | low-1x state: n=18 mean 0.959 | diff -0.027  state explains 18% of within-mode variance
+  pooled: state explains 46% of within-(type, mode) variance of true P(win)
+  condition short_history: state explains 49% of within-mode variance (small n; indicative only)
+  condition stable       : state explains 59% of within-mode variance (small n; indicative only)
+  -> the state-share is the CEILING for what a model that perfectly knew the state could remove; sign shows the tie
