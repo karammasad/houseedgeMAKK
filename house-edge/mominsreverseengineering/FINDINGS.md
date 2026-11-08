@@ -3,6 +3,24 @@
 Ledger of hypotheses, tests and verdicts. Newest at the top. Each entry: hypothesis, test, numbers, verdict, why.
 Reverts stay here as negative results. See CONTROL.md for the keep rule.
 
+## Entry 12: trust audit of v8 + shared-base (leakage, overfitting, reproduction): leakage PASS; improvement INCONCLUSIVE, leaning mildly positive
+
+**Audit status: the audit half is CONSUMED.** Candidate frozen first (predictions saved 00:53, committed 00:55 as 178bba6, ledger row had audit/full blank), then audit/full were computed once on request. Do not tune, route or blend using audit results.
+**Official scorer, full validation (/60):** v8 baseline 58.298069, v8 + shared-base 58.354723 (+0.056654); same 768 ids, same order, five categories p_0,p_1,p_2,p_5,p_20, vectors sum to 1.
+Tuning 58.3107 -> 58.3376 (+0.027), audit 58.2885 -> 58.3783 (+0.090).
+**Leakage: PASS.** Static: the only label read on the model path is the neighbour-adjust option (`adi/model.py:309`), never enabled by v8; `common/evaluate.py` (the only reader of targets / conditions / reference)
+is not imported by the model; the stacker's labels are history ticks before each cutoff (`method4_ml/model.py` `_features`: `range(t_min, cutoff)`); features use `seq[:t]` (`features3.py`); no hardcoded ids or answers.
+Runtime: a Python audit hook over a full no-cache fit + both predicts (`experiments/audit_io.py`) shows ONLY `queries.csv` and `history.csv` of train / validation / test were opened; no labels, targets, conditions or reference.
+Caveats: (1) the stacker, menu and logistic correction train on validation and test HISTORIES, including the same machines later predicted: allowed (AGENTS rule 2: histories only) and uses only earlier ticks, but it is not out-of-fold at the episode level;
+(2) the runtime trace ran on the synthetic kit (same code path); (3) the idea lineage saw validation truth: Adi's size-state finding used both halves, my probes used the tuning half, and the rejected state-shift run showed audit numbers (before this candidate existed).
+**Overfitting assessment (96 episodes, paired): INCONCLUSIVE.** Gain +0.0566, 95% CI [-0.0054, +0.1202], 90% CI [+0.0044, +0.1102], P(gain > 0) = .963. Only 53 of 96 episodes improved (sign test p = .18).
+The gain is concentrated: the 5 best episodes carry 79%, and without the 10 best the gain is -0.018; the 48 most jackpot-heavy episodes contribute +0.072, the 48 least -0.016 (consistent with the mechanism, but test-set jackpot share matters).
+Per condition (ratio change, 95% CI, points): stable -9.1% [-20, +8] +0.022; short -3.3% [-7.5, +1.3] +0.026; shared -5.1% [-13, +2] +0.015; drift +2.1% [-6, +10] -0.007 (immaterial; improved on the audit half, worsened on tuning). Every condition interval includes 0.
+**Reproducibility:** rerun (cached features) gives identical validation predictions (max abs diff 0.0), tuning 58.3376, and a test CSV that passes the official checker (1536 queries, sha256 f907a388...). A fresh no-cache rerun of the candidate on main was NOT done (about 17 min); the fresh runs on the synthetic kits and the original fresh run agree with the cached path.
+**Verdict:** credible mechanism, no leakage found, small and concentrated gain: INCONCLUSIVE as a Round 1 upgrade. Keep plain v8 as primary; `shared_base=True` is an optional configuration.
+**Round 2 technical readiness (not proven performance):** derives lag pairs from the fitted prior (`derive_pairs`), refits every population parameter and the structure weights from the new train data, off by default, fallback = plain v8, `adapt.py --stage full-select` selects on the official tuning metric.
+Remaining risks: the size state is assumed to be big-category vs the other two (direction averaged); the population fit assumes polarity is constant in the first 45% of a long log; at most 6 pair families, gates of two lags; fresh fit about 17 min on 8 cores and NOT measured on the organizers' 2 cores / 30 min limit (the packaged entry retrains; a saved checkpoint may be needed); needs scikit-learn/numpy/scipy pins (local scikit-learn 1.8.0 vs pinned 1.9.1).
+
 ## Entry 11: the Round 2 selection rule was scoring the wrong objective; fixed (full-pipeline selection)
 
 Main-kit rehearsal of `adapt.py --stage select --no-guard` (audit untouched): 3 min 49 s; gate fit 205 s, structure fit 17 s; it CHOSE the new structure on its

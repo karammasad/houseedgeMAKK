@@ -4,3 +4,4 @@ time,name,method,kwargs,tuning,audit,full,stable,short,drift,shared,seconds
 2026-11-07 23:46,B state_shift (shared size-state shift),method4_ml,"{""state_shift"": true}",58.2594,58.2667,58.2609,0.01568,0.05735,0.02414,0.02223,803.5
 2026-11-08 00:36,"v8 repro (current code, shared_base off)",method4_ml,{},58.3107,,,0.02035,0.05276,0.02723,0.01555,38.5
 2026-11-08 00:53,"C shared_base (xsg), flips on",method4_ml,"{""shared_base"": true}",58.3376,,,0.01854,0.05198,0.02827,0.01519,1011.7
+2026-11-08 02:01,C rerun for test CSV + reproducibility (cached features),method4_ml,"{""shared_base"": true}",58.3376,,,0.01854,0.05198,0.02827,0.01519,28.2
