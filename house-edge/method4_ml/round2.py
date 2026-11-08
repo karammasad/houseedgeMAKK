@@ -23,6 +23,10 @@ VARIANTS = {"gate only": (0.0, 0.0), "trees": (0.4, 0.0), "logistic": (0.0, 1.0)
 # family cannot express; "wide" also widens the gate (XOR triples, size split at both lags; slower: check runtime before shipping).
 FITS = {"v8": {}, "v9": {"polarity": True}, "v9+pol-lr": {"polarity": True, "lr_spec": ["d", "chg", "pol"]}}
 WIDE = {"v9 wide gate": {"polarity": True, "gate": {**GATE, "xor_order": 3, "size_split": "both"}}}
+# Round-one reuse (needs round-one data: --main, or auto = /main_data or a sibling data/main): frozen round-one model, combined
+# round-one + round-two training, and a conservative fixed-weight blend (weight .25 on round one, set in advance, not tuned).
+R1_FITS = {"R1 frozen": {"polarity": True, "r1": "frozen"}, "R1+R2 combined": {"polarity": True, "r1": "combined"},
+           "R2 + .25 R1 blend": {"polarity": True, "r1": "blend", "r1_weight": 0.25}}
 DEFAULT = ("v9", "v7 (trees + logistic)")   # used when there are no targets, and the bar every other candidate must clear
 
 
@@ -50,17 +54,34 @@ def main():
     ap.add_argument("--wide", action="store_true", help="also try the widened gate (slower fit; check 2-core runtime before shipping)")
     ap.add_argument("--only", default=None, help="comma-separated fit names to run (default: all)")
     ap.add_argument("--workers", type=int, default=None)
+    ap.add_argument("--main", default="auto", help="round-one public folder for the R1 candidates ('none' to skip them)")
     ap.add_argument("--set", default="{}", help="JSON settings applied to every fit (e.g. '{\"bags\": 2}' for quick stress runs)")
     a = ap.parse_args(); pub = public_dir(a.data); os.makedirs(a.out, exist_ok=False)
-    fits = {k: {**json.loads(a.set), **v} for k, v in dict(FITS, **(WIDE if a.wide else {})).items()}
+    fits = dict(FITS, **(WIDE if a.wide else {}))
+    if a.main != "none":
+        try:
+            Model(r1="frozen", r1_data=a.main)._r1_pub(pub); fits.update({k: dict(v, r1_data=a.main) for k, v in R1_FITS.items()})
+        except FileNotFoundError as e:
+            print(f"R1 candidates skipped: {e}", flush=True)
+    fits = {k: {**json.loads(a.set), **v} for k, v in fits.items()}
     if a.only:
         fits = {k: v for k, v in fits.items() if k in a.only.split(",")}
     t0 = time.time(); models, preds, secs = {}, {}, {}
     for fname, kw in fits.items():
-        t1 = time.time(); m = Model(cache=not a.no_cache, workers=a.workers, **kw).fit(pub); models[fname] = m
-        for vname, (b, w) in VARIANTS.items():
-            m.blend, m.lr_weight = b, w; preds[(fname, vname)] = m.predict(pub, "validation")
+        t1 = time.time()
+        try:
+            m = Model(cache=not a.no_cache, workers=a.workers, **kw).fit(pub)
+        except Exception as e:      # a candidate that cannot run on this round is reported and skipped, never fatal
+            print(f"fit {fname} FAILED ({type(e).__name__}: {e}); skipped", flush=True); continue
+        try:
+            for vname, (b, w) in VARIANTS.items():
+                m.blend, m.lr_weight = b, w; preds[(fname, vname)] = m.predict(pub, "validation")
+        except Exception as e:      # e.g. a frozen round-one model meeting a machine type it never saw
+            print(f"predict {fname} FAILED ({type(e).__name__}: {e}); skipped", flush=True)
+            preds = {k: v for k, v in preds.items() if k[0] != fname}; continue
+        models[fname] = m
         secs[fname] = time.time() - t1; print(f"fit {fname}: {secs[fname]:.0f}s", flush=True)
+    preds = {k: v for k, v in preds.items() if k[0] in models}
     first = models[next(iter(models))]
     rep, flags = report(first); print(json.dumps(rep, indent=1)); print("FLAGS:", *flags, sep="\n  ")
     have = os.path.exists(os.path.join(pub, "validation", "targets.csv"))
@@ -86,6 +107,10 @@ def main():
     m = models[choice[0]]; b, w = VARIANTS[choice[1]]; m.blend, m.lr_weight = b, w
     write_predictions(os.path.join(a.out, "submission.csv"), m.predict(pub, "test"))
     kw = {**fits[choice[0]], "blend": b, "lr_weight": w}
+    if "r1_data" in kw:
+        kw["r1_data"] = "auto"   # the organizer runner mounts round one at /main_data; locally auto finds data/main next to --data
+    if kw.get("r1") in ("blend", "combined"):
+        print(f"NOTE: {kw['r1']} fits more data than v9 (fit {secs.get(choice[0], 0):.0f}s here); measure the cold 2-core runtime before shipping")
     json.dump(kw, open(os.path.join(a.out, "chosen.json"), "w"))
     json.dump({"choice": list(choice), "report": rep, "flags": flags, "fit_seconds": secs}, open(os.path.join(a.out, "learned.json"), "w"), indent=1)
     print(f"wrote {a.out}/submission.csv  chosen={choice}  kwargs={json.dumps(kw)}  total {time.time() - t0:.0f}s")

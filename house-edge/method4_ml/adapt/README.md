@@ -51,3 +51,32 @@ Options:
 - adi's cook model still hardcodes the 40 + 24 short mask (adi's code, not changed here).
 - `make_entry` copies only top-level `.py` files of each package, so `adapt/` is not in the ZIP. It is not needed at
   prediction time.
+
+## Round-one reuse candidates
+
+`round2.py` also fits these when round-one data is available. It looks for `--main`, then `/main_data` (the organizer
+mount), then a sibling `data/main`:
+
+| Candidate | Setting | What it is |
+| --- | --- | --- |
+| R1 frozen | `r1="frozen"` | The model fit on round-one data, applied as is. A new machine type gets no type-specific correction. |
+| R1+R2 combined | `r1="combined"` | Fit on round-one train + round-two train. Validation and test are round two's. |
+| R2 + .25 R1 blend | `r1="blend", r1_weight=.25` | The round-two fit pooled with the frozen round-one model. The weight is set in advance, not tuned. |
+
+The same selection rule applies. A candidate that fails on the new data (for example, an unseen type) is reported and
+skipped. `chosen.json` always writes `r1_data: "auto"`, so the ZIP finds `/main_data` on the runner. Blend and combined
+fit more data, so measure the cold 2-core runtime before shipping either.
+
+## Leakage audit (2026-11-08)
+
+| What | Where it comes from | Check |
+| --- | --- | --- |
+| Query features | `load_split` builds each machine's sequence with length = cutoff, so ticks >= cutoff cannot exist (a later row would raise an error, not leak). | By construction |
+| Training rows at tick t | Features from `seq[:t]` of every machine in the same episode. Label = the history payout at t. Short-log copies mask `v[:t+1]` and use only ticks < t as inputs. | Test 1: scrambling every machine's ticks >= t leaves features bit-identical |
+| Polarity bank | Counts over u < t. The current bit uses ticks t - l < t. Only machines of the same episode. | Test 1b |
+| Size menu | Size model sees `s[:t]`, label is the history payout at t < cutoff. | Test 4 |
+| Answer files | fit/predict never open validation/test `targets`, `labels`, `conditions`, `reference`. The only label file in the fit path is TRAIN `labels.csv`, read only by adi's `neighbor_adjust` (off). | Test 3 (`--io`): open() spy on a cold fit + predict |
+| Missing ticks | -1 is unknown, never a 0 payout. | Test 2 |
+| Cross-episode | Features and the polarity bank are built per episode. Machines of other episodes are never inputs. | By construction |
+| Validation / test histories | Their PRE-cutoff ticks are used as unlabeled-in-the-contest training rows (history payout at t as label, inputs < t). Validation and test get identical treatment, so validation scores represent test. No query-tick or target information enters. | Allowed by AGENTS.md (histories of other splits) and the kit's rules |
+| Selection | `round2.py` reads validation targets outside fit/predict. It chooses on the tuning half; the audit half is only a veto. | Code review |

@@ -16,7 +16,7 @@ def check_layout(X, ntypes=3):
     """Fail loudly if the column layout drifts from features3 (a miscounted index silently ruined an earlier experiment).
     Types and signals are whatever the round uses (learned in fit), so only their form is checked."""
     from method4_ml.polarity import NFEAT
-    assert set(np.unique(X[:, COL["type"]])) <= set(map(float, range(ntypes))), "type column wrong"
+    assert set(np.unique(X[:, COL["type"]])) <= set(map(float, range(ntypes + 1))), "type column wrong"   # index ntypes = a type unseen in fit
     sg = X[:, COL["signal"]]; assert np.all(np.isfinite(sg)) and np.all(sg == np.round(sg)), "signal column wrong"
     assert np.all((X[:, COL["pw"]] >= 0) & (X[:, COL["pw"]] <= 1)), "pw column wrong"
     assert np.all(X[:, COL["nobs"]] >= 0) and np.all(X[:, COL["nobs"]] == np.round(X[:, COL["nobs"]])), "nobs column wrong"

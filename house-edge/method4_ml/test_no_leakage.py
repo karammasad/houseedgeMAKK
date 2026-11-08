@@ -53,7 +53,7 @@ def test_no_answer_files_read():
         return real(f, *a, **k)
     builtins.open = spy; io.open = spy
     try:
-        m = Model(cache=False, workers=2, bags=1, seeds=1).fit(PUB); m.predict(PUB, "validation"); m.predict(PUB, "test")
+        m = Model(cache=False, workers=2, bags=1, seeds=1, polarity=True).fit(PUB)   # v9 paths are a superset of v8's; m.predict(PUB, "validation"); m.predict(PUB, "test")
     finally:
         builtins.open = real; io.open = real
     bad = sorted({p for p in opened if os.path.basename(p) in FORBIDDEN})
@@ -75,7 +75,32 @@ def test_menu_inputs_strictly_before():
     print("OK 4: size-menu inputs stop strictly before their (history) label tick; no query tick is used")
 
 
+def test_folds_disjoint():
+    """TEST D: the kit's tuning / audit halves and the episode-hash cross-fit folds used in analysis/ share no episode."""
+    from common.evaluate import folds
+    import hashlib
+    tune, audit = folds(PUB); assert not (tune & audit), "tuning and audit halves share episodes"
+    q, _ = load_split(PUB, "validation"); f = defaultdict(set)
+    for r in q: f[int(hashlib.sha256(r["episode_id"].encode()).hexdigest()[:8], 16) % 4].add(r["episode_id"])
+    assert all(not (f[a] & f[b]) for a in f for b in f if a < b), "cross-fit folds share episodes"
+    machines = defaultdict(set)
+    for r in q: machines[r["machine_id"]].add(r["episode_id"])
+    assert all(len(v) == 1 for v in machines.values()), "a machine id spans episodes"
+    print("OK D: evaluation halves and cross-fit folds are episode-disjoint; machine ids never span episodes")
+
+
+def test_valid_probabilities(m):
+    """TEST G: every prediction is a finite, non-negative 5-vector summing to 1 (validation and test)."""
+    import math
+    for sp in ("validation", "test"):
+        P = m.predict(PUB, sp); q, _ = load_split(PUB, sp); assert set(P) == {r["query_id"] for r in q}, f"{sp}: query ids differ"
+        for k, p in P.items():
+            assert len(p) == 5 and all(math.isfinite(x) and x >= 0 for x in p) and abs(sum(p) - 1) < 1e-9, f"{sp} {k}: invalid {p}"
+    print("OK G: all validation and test predictions are valid probability vectors, every query exactly once")
+
+
 if __name__ == "__main__":
+    test_folds_disjoint()
     test_menu_inputs_strictly_before()
     m = test_no_answer_files_read() if "--io" in sys.argv else Model(bags=1, seeds=1).fit(PUB)
     sz = m.size_models["gate"] if m.size_feat else None
@@ -83,4 +108,5 @@ if __name__ == "__main__":
     m.gm.polarity = True     # v9 polarity bank (cross-machine features): the same future-scramble check must hold
     test_features_ignore_the_future(m.gm, sz, n_ep=6, seed=1); m.gm.polarity = False
     print("OK 1b: polarity-bank features ignore ticks >= t of every machine")
+    test_valid_probabilities(m)
     print("ALL LEAKAGE CHECKS PASSED")
