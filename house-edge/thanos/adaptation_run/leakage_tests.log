@@ -1,0 +1,21 @@
+/Users/adinounou/houseedgeMAKK/house-edge/thanos/egp.py:342: RuntimeWarning: divide by zero encountered in matmul
+  Lon = counts4(on, e) @ B + lw_on; Loff = counts4(off, e) @ B + lw_off   # (nT, NG)
+/Users/adinounou/houseedgeMAKK/house-edge/thanos/egp.py:342: RuntimeWarning: overflow encountered in matmul
+  Lon = counts4(on, e) @ B + lw_on; Loff = counts4(off, e) @ B + lw_off   # (nT, NG)
+/Users/adinounou/houseedgeMAKK/house-edge/thanos/egp.py:342: RuntimeWarning: invalid value encountered in matmul
+  Lon = counts4(on, e) @ B + lw_on; Loff = counts4(off, e) @ B + lw_off   # (nT, NG)
+/Users/adinounou/houseedgeMAKK/house-edge/thanos/egp.py:383: RuntimeWarning: divide by zero encountered in matmul
+  q_f = (pon if gg == 1 - p else poff) @ sg          # (nT,)
+/Users/adinounou/houseedgeMAKK/house-edge/thanos/egp.py:383: RuntimeWarning: overflow encountered in matmul
+  q_f = (pon if gg == 1 - p else poff) @ sg          # (nT,)
+/Users/adinounou/houseedgeMAKK/house-edge/thanos/egp.py:383: RuntimeWarning: invalid value encountered in matmul
+  q_f = (pon if gg == 1 - p else poff) @ sg          # (nT,)
+5 PASS  inductive fit opened only ['train/history.csv', 'train/queries.csv']
+6 PASS  every validation / test query once, valid 5-vectors; predict opened only queries / history
+2 PASS  fit + predict from a copy without labels / targets / conditions / reference: identical (inductive and transductive)
+7 PASS  no hidden labels or condition labels are needed
+1 PASS  predictions at t identical under arbitrary changes of ticks >= t (40 machines)
+4 PASS  statistics ending at t0 unaffected by tick t0
+1b PASS prediction does not depend on other machines' histories at prediction time (hyperparameters fixed)
+3 PASS  4 CV folds, episode-disjoint, cover all 96 train episodes; machine ids never span episodes
+ALL LEAKAGE TESTS PASSED
