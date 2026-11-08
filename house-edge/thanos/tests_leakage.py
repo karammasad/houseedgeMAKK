@@ -1,5 +1,5 @@
 """Automated leakage / validity tests for the EGP challenger. Run BEFORE any performance comparison:
-    python -m thanos_method.tests_leakage --data data/main
+    python -m thanos.tests_leakage --data data/main
 Exits non-zero on the first failure.
 
  1 future invariance: changing a machine's ticks at or after t never changes its prediction at t (or its window statistics before t)

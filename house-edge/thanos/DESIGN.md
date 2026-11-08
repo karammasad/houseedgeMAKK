@@ -1,7 +1,7 @@
 # Clean-slate challenger: design, evidence review and pre-registration
 
 Written 2026-11-08 BEFORE any code of the challenger existed or any of its results were seen.
-Folder: `thanos_method/` (independent: imports only `common.data` for CSV loading and `common.evaluate` for the official metric).
+Folder: `thanos/` (independent: imports only `common.data` for CSV loading and `common.evaluate` for the official metric).
 
 ## Phase 1: what the repository has learned
 

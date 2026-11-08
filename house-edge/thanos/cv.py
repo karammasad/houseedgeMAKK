@@ -5,7 +5,7 @@ predict the held-out fold's machines at cutoffs c, c-1, c-2, c-3 (history trunca
 the observed history tick otherwise). Score: 5-class Brier (squared error to the one-hot outcome) and log loss, per condition and type.
 Also reported: the same model fitted on ALL train (in-sample hyperparameters) on the same rows, and a pooled per-type frequency baseline
 fitted on the training folds. Conditions / labels are read here for SCORING only (train split; permitted).
-    python -m thanos_method.cv --data data/main --out <dir>
+    python -m thanos.cv --data data/main --out <dir>
 """
 import argparse, csv, hashlib, json, os, pickle, time
 from collections import defaultdict

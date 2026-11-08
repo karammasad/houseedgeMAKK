@@ -1,6 +1,6 @@
 """Official-metric comparison of the challenger vs the champion on full validation (diagnosis / promotion evidence only;
 nothing here feeds back into the model). Validation has been inspected by the team before: NOT a fresh holdout.
-    python -m thanos_method.compare --new egp.pkl --old champion.pkl [--blend .5] [--label ...]
+    python -m thanos.compare --new egp.pkl --old champion.pkl [--blend .5] [--label ...]
 Reports: points (tuning / audit / full), per-condition ratios, paired within-condition episode bootstrap of the points change,
 episodes improved, top-5 share, without top 5 / 10, leave-one-out of the top 5, per machine type, error correlation and, if asked,
 the ONE pre-registered fixed-weight blend.

@@ -73,3 +73,45 @@ SHORT logs 3072 rows / 24 episodes: +0.000611 [-0.001272, +0.002572], P .27. -> 
 E2 (tickset own) inductive, full validation (CONTAMINATED: chosen after section 1): 58.567 vs champion inductive 58.332 (+0.235, CI [+0.018, +0.429],
 P .982, 62/96 improved; tuning 58.424 vs 58.315, audit 58.732 vs 58.355; stable -8.0%, short -15.5%, drift -13.1%, shared -18.3%;
 top-5 share 69%, without top 5 +0.073, without top 10 +0.009). Deciding evidence still pending: CV (section 4 rule) and the section-2 test rerun with E2.
+
+## 6. Provenance of the headline numbers (E2 = tickset "own", the default)
+Produced by `python3 -m thanos.run --splits {all|train} --tickset own --threads 2 --also validation` (code = commit 360ebc6, before the move
+the same code ran as method4_ml.cleanslate). Saved locally (build/ is gitignored):
+- build/thanos_trans/: validation.pkl / validation.csv (sha256 48702850...) -> 58.6293 full; submission.csv (test, sha256 48e00879...); hyper.pkl; run.json.
+- build/thanos_ind/: validation.csv (sha256 c752249c...) -> 58.5673 full.
+- Champion references: build/thanos_trans/momin_sb_val.pkl (58.3554, = checkpoint build/main_sb_ckpt rerun), momin_sb_inductive_val.pkl (58.3318).
+Reproduce the comparison: `python3 -m thanos.compare --new build/thanos_trans/validation.pkl --old build/thanos_trans/momin_sb_val.pkl`.
+The CV baseline for section 4 is the section-1 CV run (tickset common, identical deterministic folds); not rerun.
+
+## 7. Section-4 verdict: train-only CV of the tick-set change (E2 "own" vs EGP "common", same folds and rows)
+`python3 -m thanos.cv_compare` (paired episode bootstrap, new - old out-of-fold 5-class Brier):
+stable -0.000021 (P .56), SHORT_HISTORY +0.000780 [-0.000477, +0.002182] (P(new better) .12), drift -0.000076 (P .86), shared +0.000142 (P .16).
+E2 CV: OOF .35886 vs in-sample .35865 (gap +.00021, CI includes 0).
+VERDICT: FAIL. The pre-registered rule is not met; train data point the other way on short logs. The validation short-log gain (ratio .0689 -> .0435,
+about -0.002 in squared error) lies outside the train CI, so it is most likely largely selection / sampling noise on 24 short validation episodes
+(the same pattern as method2 exps 12-13). E2's 58.629 is NOT credible evidence of improvement.
+
+## 8. E2 vs the champion on train (section-2 test rerun with E2 hyperparameters; long-log rows reproduce section 5: -0.001028 vs -0.001032)
+| train rows | E2 - champion Brier | 95% CI | P(E2 better) |
+| --- | --- | --- | --- |
+| long, 72 episodes | -0.001028 | [-0.001710, -0.000309] | .997 |
+| short, 24 episodes | -0.001067 | [-0.002778, +0.000717] | .884 |
+| all, 96 episodes | -0.001037 | [-0.001700, -0.000338] | .998 |
+Short logs by cutoff slice (vs champion): E1 j0 -0.0007 (P .57), j0-3 +0.0013 (P .32), j4-15 +0.0004 (P .37); E2 j0 -0.0023 (P .78), j0-3 +0.0024 (P .19),
+j4-15 -0.0022 (P .99). Paired E2 - E1 on identical rows: all j -0.00168 (P .999), j0-3 +0.00115 (P .04), j4-15 -0.00262 (P 1.0). CIs ~ +-.005 at j0-3:
+24 short train episodes cannot settle short logs; the slice closest to real queries (j0-3, also the CV window) leans AGAINST E2.
+
+## 9. Decision (2026-11-08)
+- LONG logs (stable / drift / shared): thanos beats the champion on validation (-8 / -12 / -20% error) AND on independent train outcomes (P .997);
+  E1 and E2 are identical there. ESTABLISHED.
+- SHORT logs: E2 is much better on validation (.0435 vs .0549) but the choice was post hoc and train evidence is inconclusive / leans against at
+  query-like cutoffs; E1 loses on both. NOT ESTABLISHED.
+- Conservative entry (recommended): ROUTED = thanos on long logs, champion on short logs (log shape is observable). Validation 58.467
+  (tuning 58.414 / audit 58.527) vs champion 58.355: +0.11, every component backed by train-only evidence. Runtime: thanos fit (~6-11 min) + champion
+  checkpoint predict (~40 s).
+- Higher-upside alternative: full thanos E2, 58.629, carries the unverified short-log part (+0.16 of its validation gain comes from short logs).
+- Leakage tests on tickset "own": ALL PASS (section 10).
+
+## 10. Leakage tests on the final tick set ("own"): ALL 8 PASS (5, 6, 2, 7, 1, 4, 1b, 3), same tests as section 1.
+Repo layout from here: `thanos/` (full model, this folder) and `mini_thanos/` (routed entry: thanos on long logs, champion checkpoint on short logs;
+end to end 564 s, validation 58.4666 reproduced, test CSV sha256 a9c716a6..., passes the kit checker).

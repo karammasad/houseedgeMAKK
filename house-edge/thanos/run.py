@@ -1,5 +1,5 @@
 """End-to-end reproduction path (what the organizer rerun would execute): load data, fit every hyperparameter, predict, write CSVs.
-    python -m thanos_method.run --data data/main --splits train --out build/egp_ind [--threads 2] [--also validation]
+    python -m thanos.run --data data/main --splits train --out build/egp_ind [--threads 2] [--also validation]
 Records wall / CPU time per stage, peak RSS and the CSV SHA-256 in <out>/run.json. Threads are pinned BEFORE numpy is imported.
 """
 import argparse, os, sys

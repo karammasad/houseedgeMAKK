@@ -1,5 +1,5 @@
 """Independent test of H-route (LOG.md section 2): EGP vs champion on TRAIN outcomes at cutoffs c - j, j = 0..J (no validation data).
-    python -m thanos_method.route_test --ckpt build/main_sb_ckpt/entry_src --hyper <egp_trans>/hyper.pkl --out <dir>
+    python -m thanos.route_test --ckpt build/main_sb_ckpt/entry_src --hyper <egp_trans>/hyper.pkl --out <dir>
 Champion predictions come from its saved checkpoint, fed pseudo-public folders whose train histories are truncated at c - j.
 """
 import argparse, csv, os, pickle, shutil, sys, tempfile
@@ -14,7 +14,7 @@ def main():
     ap.add_argument("--hyper", required=True); ap.add_argument("--out", required=True); ap.add_argument("--J", type=int, default=15); ap.add_argument("--tickset", default="own")
     a = ap.parse_args(); data = os.path.abspath(a.data); os.makedirs(a.out, exist_ok=True)
     from common.data import load_split
-    from thanos_method import egp
+    from thanos import egp
     H = pickle.load(open(a.hyper, "rb")); egp.TICKSET = a.tickset
     q, seq = load_split(data, "train")
     labels = {r["query_id"]: int(r["outcome"]) for r in csv.DictReader(open(os.path.join(data, "train", "labels.csv")))}
