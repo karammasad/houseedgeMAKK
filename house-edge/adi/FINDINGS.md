@@ -333,3 +333,20 @@ Takeaways: the gate posterior already captures what a linear meta-learner can us
 per-machine rate noise near the binomial floor (true P(win) would give ~59.6). The on/off correlation seen in raw
 rates is mostly explained by signal and size state, which are already modelled. The blend is the only consistent
 (4/4) gain, but it's small. **Recommended entry unchanged: adi.sizewin (adi/out/main_entry, CSV 1ddc8832).**
+
+## Round two preparation: adi/r2 (adaptive copy of the 58.21 model) + one-command runbook
+
+`adi/r2/model.py` (`--method adi.r2`) copies adi.sizewin and widens everything that was fixed to main-round
+patterns, so it's re-learned from the new kit's train data: XOR pairs + triples (lags 1..12) + AND-family pairs
+(pruned by the train-learned prior), size split at BOTH pair lags, and GateSizes' size-lag range set from the
+fitted gate (max(8, longest kept lag); "auto").
+
+Ablations on main (tuning; fully wide = 58.185): without triples 58.185 (triples cost nothing, pruned away), split at
+the smaller lag only 58.169 (both-lag split helps), size lags 8 instead of 12 = 58.238. Hence the adaptive size range.
+**adi.r2 on main: tuning 58.238 / audit 58.212 / full 58.224** (adi.sizewin: 58.221 / 58.211 / 58.214).
+
+Runbook `python3 -m adi.r2.run --data data/adaptation --out build/r2` (adi/r2/README.md): fits r2 and the exact main
+model, scores both on the new validation set, picks by tuning (audit guard 0.3), prints what was learned, writes and
+checks the test CSV, builds the verified ZIP. Dress rehearsal on main: chose r2, CSV 4c5afdc5, kit check OK, ZIP
+fresh-unzip rerun byte-identical. The main upload (adi.sizewin, 1ddc8832) still rebuilds identically after the
+small `_make_base` refactor.

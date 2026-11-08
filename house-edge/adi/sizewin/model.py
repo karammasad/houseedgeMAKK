@@ -69,8 +69,11 @@ class Model:
                     jobs.append((r, ms, t)); ys.append(w[t])
         return jobs, ys
 
+    def _make_base(self, pub):
+        return M2(**self.base_kw).fit(pub)
+
     def fit(self, pub):
-        self.base = M2(**self.base_kw).fit(pub)
+        self.base = self._make_base(pub)
         jobs, y = self._examples(pub)
         _G["base"] = self.base
         import os
