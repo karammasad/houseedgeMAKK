@@ -16,6 +16,37 @@ keep checks, reverts kept as options). Anyone on the team can follow it on any m
    Reverts stay in the file as negative results. They prevent re-running the same idea next week.
 6. **If KEEP, promote:** update FINAL in `final.json` (one place), log a status line in TASK.md, rebuild the upload files.
 
+## Round-two night protocol (team decision, from the pasted plan)
+
+1. **Fallback first.** Current pipeline refit on the round-two train data, checked with `kit/check_submission.py`, uploaded.
+2. **Retune on the tuning half** only.
+3. **Reverse-engineer with train + the tuning half, including that half's `targets.csv`.** Look for general rules about the
+   generator (restrictions, menus, tied parameters), never settings for particular episodes. `probes.py` does this and reads
+   the tuning half only. A discovery is only a model change if it can be LEARNED inside `fit()` from train/history data.
+4. **Audit half once per finished idea.** Keep an idea only if the audit half improves by >= 0.15 points AND no condition gets worse.
+5. **Stop new ideas around 6 AM**; submit the best version that passed step 4 (re-run the checker and the fresh-unzip rerun).
+
+Why this does not overfit: every kept change has to move a half it was never tuned on, and the audit is looked at sparingly.
+Anything fit on tuning-half targets is allowed to be wrong; the audit gate catches it.
+
+Reading the audit bar honestly: the kit has 12 episodes per condition per half, so a +0.15 audit gain is close to the noise
+level of a single half: the same fixed model scores differently on the two halves by 0.02 (v8), 0.09 (v5) and 0.19 (v4) points,
+so a +0.15 audit gain can be luck. Treat it as the gate, but not as proof (we have not measured its standard error). The audit gate is the decision rule. As a second,
+non-binding view, report `run.py keep` (paired bootstrap on full validation) next to it. If they disagree, default to the
+simpler model and say so.
+
+Conflict to be aware of: AGENTS.md rule 6 says "+0.15 on TUNING and the audit moves the same way". The pasted plan says the
+bar is +0.15 on the AUDIT half with no condition worse. For this folder we follow the pasted plan (it is the newer decision).
+Both must at least move the same way.
+
+## Don't overfit to main
+
+- Anything learned about main stays a hypothesis until the same probe passes on the round-two kit (`probes.py`, `fingerprint.py`).
+- Never hardcode values read off main (lags, rates, vectors, sd). Put a value in code only if `fit()` re-derives it.
+- A restriction that FAILS on the new kit must degrade gracefully (fall back to the wider model), like the size menu does
+  when there are fewer than 50 wins per type.
+- See `ROUND2_CLUES.md` for what the organizers have said about round two.
+
 ## Rules that never change
 
 - Only edit this folder. Other teams' folders are read, never written to. Copy from them into here if you need code.
