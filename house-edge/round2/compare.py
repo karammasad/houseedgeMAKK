@@ -9,7 +9,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 R = os.path.join(HERE, "results")
 
 CANDIDATES = [
-    ("thanos (plain E2)", os.path.join(R, "thanos_r2_score.json")),
+    ("thanos (plain E2, Adi's run)", os.path.join(R, "thanos_r2_adi_score.json")),
+    ("thanos (plain E2, our run)", os.path.join(R, "thanos_r2_score.json")),
     ("thanos + no-gate fix", os.path.join(R, "thanos_nogate_r2_score.json")),
     ("method4_ml base (v9)", os.path.join(R, "r2", "base", "final.json")),
     ("method4_ml sb (v9+shared-base)", os.path.join(R, "r2", "sb", "final.json")),
