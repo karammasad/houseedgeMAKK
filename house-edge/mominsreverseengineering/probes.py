@@ -150,8 +150,54 @@ def probe_shape(rows):
     print("  -> a few units is noise at this n; >10 would justify the logit-normal gate prior test")
 
 
+def probe_state(rows):
+    """Does the hidden size state move the WIN rate, and how much of the within-mode win-rate variance is that state?
+    State = which of the type's two size vectors the query is on (low vs high P(1x|win)). Mode = off/on gate cell (2-means on logit).
+    Upper bound for any model that knew the state: share of within-(type, mode) variance of P(win) explained by the state."""
+    print("== state: size state vs win rate, within type x gate mode (truth, tuning half)")
+    lg = lambda p: math.log(max(p, 1e-6) / max(1 - p, 1e-6))
+    cells = []                                        # (type, mode, state, pw, cond)
+    for ty in sorted({r["machine_type"] for r in rows}):
+        rs = [r for r in rows if r["machine_type"] == ty]
+        x = sorted(lg(r["pw"]) for r in rs); c = [x[len(x) // 4], x[3 * len(x) // 4]]
+        for _ in range(30):
+            lo = [v for v in x if abs(v - c[0]) <= abs(v - c[1])]; hi = [v for v in x if abs(v - c[0]) > abs(v - c[1])]
+            c = [mean(lo), mean(hi)]
+        thr = (c[0] + c[1]) / 2
+        s1 = [r["size"][0] for r in rs]; mid = (min(s1) + max(s1)) / 2
+        for r in rs:
+            cells.append((ty, "on" if lg(r["pw"]) > thr else "off", int(r["size"][0] > mid), r["pw"], r["cond"]))
+    tot_w = tot_b = 0.0
+    for ty in sorted({c[0] for c in cells}):
+        for mode in ("off", "on"):
+            g = [c for c in cells if c[0] == ty and c[1] == mode]
+            m1 = [c[3] for c in g if c[2] == 1]; m0 = [c[3] for c in g if c[2] == 0]
+            if len(m1) < 3 or len(m0) < 3:
+                continue
+            allp = [c[3] for c in g]; gm = mean(allp)
+            within = sum((p - gm) ** 2 for p in allp)
+            between = len(m1) * (mean(m1) - gm) ** 2 + len(m0) * (mean(m0) - gm) ** 2
+            tot_w += within; tot_b += between
+            print(f"  {ty:9s} {mode:3s} high-1x state: n={len(m1):2d} mean P(win) {mean(m1):.3f} | low-1x state: n={len(m0):2d} mean {mean(m0):.3f} | "
+                  f"diff {mean(m1) - mean(m0):+.3f}  state explains {between / within:.0%} of within-mode variance")
+    print(f"  pooled: state explains {tot_b / tot_w:.0%} of within-(type, mode) variance of true P(win)")
+    for cond in ("short_history", "stable"):
+        w = b = 0.0
+        for ty in sorted({c[0] for c in cells}):
+            for mode in ("off", "on"):
+                g = [c for c in cells if c[0] == ty and c[1] == mode and c[4] == cond]
+                m1 = [c[3] for c in g if c[2] == 1]; m0 = [c[3] for c in g if c[2] == 0]
+                if len(m1) < 2 or len(m0) < 2:
+                    continue
+                allp = [c[3] for c in g]; gm = mean(allp)
+                w += sum((p - gm) ** 2 for p in allp)
+                b += len(m1) * (mean(m1) - gm) ** 2 + len(m0) * (mean(m0) - gm) ** 2
+        print(f"  condition {cond:13s}: state explains {b / max(w, 1e-12):.0%} of within-mode variance (small n; indicative only)")
+    print("  -> the state-share is the CEILING for what a model that perfectly knew the state could remove; sign shows the tie")
+
+
 PROBES = {"sizes": probe_sizes, "winrate": probe_winrate, "signal": probe_signal, "variance": probe_variance, "cells": probe_cells,
-          "shape": probe_shape}
+          "shape": probe_shape, "state": probe_state}
 
 
 def main():
