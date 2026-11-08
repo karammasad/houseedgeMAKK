@@ -12,7 +12,7 @@ Steps: stage common/ and all method*/ packages plus a generated predict.py, READ
 entry_config.json; predict the test split; run the kit checker; zip with kit/build_entry.py; unpack the ZIP
 into a fresh folder, rerun it, and require a byte-identical CSV. Upload <out>/submission.csv and <out>/entry.zip.
 """
-import argparse, filecmp, hashlib, json, os, shutil, subprocess, sys, tempfile, zipfile
+import argparse, filecmp, hashlib, json, os, shutil, subprocess, sys, tempfile, time, zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXTRA_PKGS = ["adi"]   # non-method* packages the recommended model imports
@@ -106,14 +106,45 @@ Recreate: `python predict.py --data /data --out /output/submission.csv` (run fro
     run([sys.executable, os.path.join(ROOT, "kit", "check_submission.py"), csv_path, "--data", pub])
     zip_path = os.path.join(out, "entry.zip")
     run([sys.executable, os.path.join(ROOT, "kit", "build_entry.py"), "--source", src, "--out", zip_path], cwd=os.path.join(ROOT, "kit"))
+    # --- ZIP layout: must open directly to README.md and reproduce.json; requirements.txt must be at the ROOT (external packages)
+    names = zipfile.ZipFile(zip_path).namelist()
+    for need in ("README.md", "reproduce.json", "requirements.txt", "predict.py", "entry_config.json"):
+        if need not in names:
+            sys.exit(f"ZIP root is missing {need}: {sorted(n for n in names if '/' not in n)}")
+    if any(n.startswith("/") or ".." in n.split("/") for n in names):
+        sys.exit("ZIP contains unsafe paths")
+    # --- CSV validity: every test query once, finite, nonnegative, sums to 1 (independent of the kit checker)
+    import csv as _csv, math
+    with open(os.path.join(pub, "test", "queries.csv"), newline="") as fh:
+        want = [r["query_id"] for r in _csv.DictReader(fh)]
+    def read_probs(path):
+        with open(path, newline="") as fh:
+            rd = _csv.DictReader(fh); assert rd.fieldnames == ["query_id", "p_0", "p_1", "p_2", "p_5", "p_20"], rd.fieldnames
+            return {r["query_id"]: [float(r[c]) for c in rd.fieldnames[1:]] for r in rd}
+    P = read_probs(csv_path)
+    assert sorted(P) == sorted(want) and len(P) == len(want), "test queries missing or duplicated"
+    for k, v in P.items():
+        assert all(math.isfinite(x) and x >= 0 for x in v) and abs(sum(v) - 1) < 1e-6, f"invalid probabilities for {k}: {v}"
+    # --- fresh unzip + rerun (this is also the environment check: it runs with whatever interpreter/packages launched this builder)
     with tempfile.TemporaryDirectory() as tmp:
         zipfile.ZipFile(zip_path).extractall(tmp)
-        again = os.path.join(tmp, "rerun.csv")
+        again = os.path.join(tmp, "rerun.csv"); _t1 = time.time()
         run([sys.executable, "predict.py", "--data", os.path.abspath(a.data), "--out", again], cwd=tmp)
-        if not filecmp.cmp(again, csv_path, shallow=False):
-            sys.exit("RERUN MISMATCH: the ZIP does not reproduce the CSV")
-    print(f"\nOK. Upload {csv_path} and {zip_path}. CSV SHA-256 {digest}")
-
+        rerun_s = time.time() - _t1
+        same_bytes = filecmp.cmp(again, csv_path, shallow=False)
+        Q = read_probs(again); maxdiff = max(abs(x - y) for k in P for x, y in zip(P[k], Q[k]))
+        if not same_bytes and maxdiff > 1e-8:
+            sys.exit(f"RERUN MISMATCH: max |diff| {maxdiff:.3g} exceeds the organizer tolerance 1e-8")
+    import importlib.metadata as md
+    info = dict(csv_sha256=digest, zip_sha256=hashlib.sha256(open(zip_path, "rb").read()).hexdigest(), commit=commit, dirty=dirty,
+                python=sys.version.split()[0], platform=sys.platform, settings={**json.loads(a.kwargs), "cache": False},
+                packages={n.split("==")[0]: md.version(n.split("==")[0]) for n in req_lines}, first_run_seconds=round(runtime),
+                rerun_seconds=round(rerun_s), byte_identical=same_bytes, max_abs_diff=maxdiff, queries=len(P),
+                zip_root=sorted(n for n in names if "/" not in n))
+    with open(os.path.join(out, "verification.json"), "w") as fh:
+        json.dump(info, fh, indent=1)
+    print("\nVERIFIED:", json.dumps({k: info[k] for k in ("python", "first_run_seconds", "rerun_seconds", "byte_identical", "max_abs_diff", "queries")}))
+    print(f"OK. Upload {csv_path} and {zip_path}. CSV SHA-256 {digest}")
 
 if __name__ == "__main__":
     main()

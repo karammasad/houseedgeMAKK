@@ -148,8 +148,17 @@ class Model:
                         keep = set(range(t - 40, t + 1)) | set(rng.sample(range(t - 40), 24))
                         msub[mid] = [x if i in keep else -1 for i, x in enumerate(v[:t + 1])]
                     jobs.append((ms, msub, [t]))
-        with get_context("fork").Pool(self.workers, _init, (self.gm, self.size_models.get("gate") if self.size_feat else None)) as pool:
-            res = pool.map(_episode_job, jobs, chunksize=1)
+        init_args = (self.gm, self.size_models.get("gate") if self.size_feat else None)
+        res = None
+        if self.workers > 1:
+            try:      # parallel feature building; falls back to serial (identical results) if the runner forbids Pool/shared memory
+                with get_context("fork").Pool(self.workers, _init, init_args) as pool:
+                    res = pool.map(_episode_job, jobs, chunksize=1)
+            except (OSError, PermissionError, ImportError, ValueError, NotImplementedError) as e:
+                print(f"method4_ml: multiprocessing unavailable ({type(e).__name__}: {e}); building features serially", flush=True)
+                res = None
+        if res is None:
+            _init(*init_args); res = [_episode_job(j) for j in jobs]
         X, y, ids = [], [], []
         for (ms, sub, ticks), feats in zip(jobs, res):
             for r in ms:
