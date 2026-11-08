@@ -3,6 +3,19 @@
 Ledger of hypotheses, tests and verdicts. Newest at the top. Each entry: hypothesis, test, numbers, verdict, why.
 Reverts stay here as negative results. See CONTROL.md for the keep rule.
 
+## Entry 14: deployment fix (checkpoint packaging): rerun 27 min -> about 30 s, predictions unchanged
+
+Problems found in `method4_ml/make_entry.py` (our copy): (1) the packaged entry refits from scratch in the organizers' rerun (27.2 min on 2 cores, Entry 13); (2) packaging fits TWICE (CSV, then the fresh-unzip check);
+(3) it refused to build unless installed packages equalled a stale pin file (scikit-learn 1.9.1 vs 1.8.0 here) and `--allow-mismatch` would ship pins that did not produce the CSV;
+(4) it looked for `kit/` under this folder, which does not exist (crash after the long fit); (5) `workers` came from `os.cpu_count()`, which a 2-core container may report as the host's.
+Fix (no change to model maths or predictions): fit once or reuse a model from `adapt.py` (`--model-pkl`), ship `model.pkl` in the ZIP, `predict.py` loads it with 2 workers / 2 threads and falls back to a full refit if the checkpoint is missing or unreadable;
+requirements are written from the installed packages that produced the model (warning, not failure, versus the team pin file); kit path resolved; adapt.py saves `model.pkl` per candidate.
+**Verified on main with the candidate** (`--use-cache` for the fit only): packaged predict.py 31 s, fresh-unzip rerun 30 s, byte-identical (max difference 0.0), identical to the in-memory fitted model (0.0) and to the earlier test CSV (sha256 f907a388...);
+official checker VALID (1536 queries); ZIP 3.1 MB (model.pkl 8.1 MB); the whole build took 1 min 56 s with the cached fit (a fresh fit adds one 17-27 min fit, once, instead of twice).
+Fallback tested: with a corrupted model.pkl predict.py prints a warning and starts refitting. NOT tested: the pinned package versions (the ZIP pins the installed 1.8.0 / 2.4.4 / 1.17.1, which must be installable by the organizers), and a fresh no-cache end-to-end build.
+Also fixed: the deployment script printed megabytes as gigabytes (peak memory is about 240 MB main process, 95 MB largest worker).
+Round 2 flow: `adapt.py --stage full-select` (fits each candidate once, saves model.pkl) -> `python3 -m method4_ml.make_entry --data <kit> --out <dir> --model-pkl <chosen>/model.pkl` (no refit).
+
 ## Entry 13: deployment feasibility (official 2-core / 30-minute rerun): MARGINAL as packaged; a saved checkpoint is the fix
 
 **Official limits** (`kit/README.md`, `RULES.md`, `SUBMISSION_README.md`): 30 minutes, two CPU cores, 16 GiB RAM, no network, `/tmp` 128 MiB, `/output` 32 MiB, output within 1e-8 of the submitted CSV.
