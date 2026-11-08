@@ -23,6 +23,23 @@ them is edited. Working tree: `round2-live` worktree, branch `round2-live` off `
 - Safety net (stdlib only, no sklearn risk): **adi.r2** (`adi/r2/run.py`), ~58.2 full on main, fits a wide/adaptive
   candidate + the exact main-round model, picks on tuning (audit guard).
 
+## IMPORTANT: use round2/kit_r2/check_submission.py, not kit/check_submission.py
+
+The repo's `house-edge/kit/` folder is a stale copy from the main-round kit download (day 1). Its
+`slot_forecasting/rounds.py` hardcodes `ROUND_POINTS = {"main": 60, "adaptation": 40}` and will raise
+`ValidationError: Expected main=60 or adaptation=40 in metadata; old 80/20 kits must be updated by
+organizers.` against the real adaptation kit, whose `metadata.json` correctly says `max_points: 20`
+(round="adaptation") — matching the participant guide ("Main: 80 points. Round two: 20 points.").
+The freshly-downloaded adaptation kit ships its own correct checker (`ROUND_POINTS = {"main": 80,
+"adaptation": 20}`), copied here unmodified as `round2/kit_r2/`. **Use this for every round-2 format
+check and validation score**, e.g.:
+```
+python3 round2/kit_r2/check_submission.py <csv> --data data/adaptation
+python3 round2/kit_r2/check_submission.py <validation.csv> --data data/adaptation --split validation
+```
+(`house-edge/kit/` is left untouched — it's still correct for the closed main round, whose
+`data/main/metadata.json` says `max_points: 60`. Don't overwrite it.)
+
 ## Day-one checklist (do this the moment the kit lands)
 
 1. Unzip the new kit into its own folder (outside the repo). Confirm `public/metadata.json` says `"round": "adaptation"`.
